@@ -1,0 +1,34 @@
+---
+# Inventory group holding the control-plane nodes. The first host in it
+# bootstraps the cluster with kubeadm init.
+control_plane_group: control_plane
+
+# Address the API server advertises to the rest of the cluster.
+control_plane_advertise_address: "{{ ansible_facts['default_ipv4']['address'] }}"
+
+# Stable DNS name or VIP (host[:port]) for the API server. Set this if the
+# cluster may ever get more control-plane nodes: it can't be added after init.
+control_plane_endpoint: ""
+
+control_plane_pod_network_cidr: "10.244.0.0/16"
+control_plane_service_cidr: "10.96.0.0/12"
+
+# Allow ordinary workloads on control-plane nodes (e.g. a single-node cluster).
+control_plane_schedulable: false
+
+# How long the kubelet delays node shutdown so pods can stop cleanly. Critical
+# pods get the last control_plane_shutdown_grace_period_critical_pods of it.
+control_plane_shutdown_grace_period: "60s"
+control_plane_shutdown_grace_period_critical_pods: "20s"
+
+# Users who get a copy of the cluster-admin kubeconfig as ~/.kube/config.
+control_plane_kubeconfig_users: []
+
+control_plane_helm_version: "v4.3.0"
+
+# Flannel release (Helm chart version) used as the cluster's CNI.
+control_plane_flannel_version: "v0.28.9"
+
+# Interface Flannel uses for traffic between nodes. Empty means the interface
+# with the default route.
+control_plane_flannel_iface: ""

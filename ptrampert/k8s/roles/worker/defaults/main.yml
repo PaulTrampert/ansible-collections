@@ -1,0 +1,3 @@
+---
+# Control-plane host that issues join tokens and is used to check node status.
+worker_control_plane_host: "{{ groups['control_plane'][0] }}"

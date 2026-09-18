@@ -1,0 +1,41 @@
+---
+- name: Gather installed package facts
+  ansible.builtin.package_facts:
+
+- name: Refuse to change the installed Kubernetes version
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['packages'][item][0]['version'].startswith(node_kubernetes_version ~ '-')
+    fail_msg: >-
+      {{ item }} {{ ansible_facts['packages'][item][0]['version'] }} is installed but
+      node_kubernetes_version is {{ node_kubernetes_version }}. Kubernetes upgrades
+      must follow the kubeadm upgrade procedure.
+    quiet: true
+  loop: "{{ node_kubernetes_packages }}"
+  when: item in ansible_facts['packages']
+
+- name: Install Kubernetes packages
+  ansible.builtin.apt:
+    name: "{{ node_kubernetes_packages | map('regex_replace', '$', '=' ~ node_kubernetes_version ~ '-*') }}"
+    state: present
+
+- name: Hold Kubernetes packages at their installed version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ node_kubernetes_packages }}"
+
+- name: Set the kubelet node IP
+  ansible.builtin.copy:
+    dest: /etc/default/kubelet
+    content: "KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kubelet
+
+# The kubelet restarts in a loop until kubeadm init or join configures it.
+- name: Enable kubelet
+  ansible.builtin.systemd_service:
+    name: kubelet
+    enabled: true

@@ -1,0 +1,22 @@
+---
+- name: Load kernel modules at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/kubernetes.conf
+    content: "{{ node_kernel_modules | join('\n') }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Load kernel modules now
+  ansible.builtin.command:
+    cmd: modprobe {{ item }}
+    creates: /sys/module/{{ item }}
+  loop: "{{ node_kernel_modules }}"
+
+- name: Set sysctls
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+    reload: true
+  loop: "{{ node_sysctls | dict2items }}"

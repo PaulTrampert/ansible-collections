@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Only overrides are listed; containerd fills in everything else with its
+# defaults (see `containerd config default`).
+version = 3
+
+[plugins.'io.containerd.cri.v1.images'.pinned_images]
+  sandbox = '{{ node_sandbox_image }}'
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+  SystemdCgroup = true

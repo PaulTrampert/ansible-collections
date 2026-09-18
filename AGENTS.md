@@ -75,6 +75,8 @@ ansible-playbook playbook.yml             # re-run: should report changed=0 (ide
 vagrant destroy -f                        # tear down
 ```
 
+`tests/k8s/` supports single-node and multi-node topologies; see `tests/k8s/README.md`.
+
 Use `vagrant snapshot save`/`restore` to get back to a clean baseline quickly instead of rebuilding VMs between runs. A change to a role isn't done until it converges on fresh VMs and a second run reports no changes.
 
 ## Versioning

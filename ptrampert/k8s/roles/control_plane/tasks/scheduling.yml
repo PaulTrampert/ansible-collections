@@ -1,0 +1,38 @@
+---
+- name: Read the control-plane node
+  ansible.builtin.command: kubectl get node {{ control_plane_node_name }} -o json
+  register: control_plane_node
+  changed_when: false
+
+- name: Collect the node's taints and labels
+  ansible.builtin.set_fact:
+    control_plane_node_taints: "{{ (control_plane_node.stdout | from_json).spec.taints | default([]) | map(attribute='key') }}"
+    control_plane_node_labels: "{{ (control_plane_node.stdout | from_json).metadata.labels }}"
+
+- name: Allow workloads on the control-plane node
+  when: control_plane_schedulable | bool
+  block:
+    - name: Remove the control-plane taint
+      ansible.builtin.command: kubectl taint node {{ control_plane_node_name }} node-role.kubernetes.io/control-plane:NoSchedule-
+      when: "'node-role.kubernetes.io/control-plane' in control_plane_node_taints"
+      changed_when: true
+
+    # kubeadm adds this label so load balancers (e.g. MetalLB) skip control-plane
+    # nodes; a node that runs workloads should be eligible.
+    - name: Remove the exclude-from-external-load-balancers label
+      ansible.builtin.command: kubectl label node {{ control_plane_node_name }} node.kubernetes.io/exclude-from-external-load-balancers-
+      when: "'node.kubernetes.io/exclude-from-external-load-balancers' in control_plane_node_labels"
+      changed_when: true
+
+- name: Keep workloads off the control-plane node
+  when: not control_plane_schedulable | bool
+  block:
+    - name: Add the control-plane taint
+      ansible.builtin.command: kubectl taint node {{ control_plane_node_name }} node-role.kubernetes.io/control-plane:NoSchedule
+      when: "'node-role.kubernetes.io/control-plane' not in control_plane_node_taints"
+      changed_when: true
+
+    - name: Add the exclude-from-external-load-balancers label
+      ansible.builtin.command: kubectl label node {{ control_plane_node_name }} node.kubernetes.io/exclude-from-external-load-balancers=
+      when: "'node.kubernetes.io/exclude-from-external-load-balancers' not in control_plane_node_labels"
+      changed_when: true

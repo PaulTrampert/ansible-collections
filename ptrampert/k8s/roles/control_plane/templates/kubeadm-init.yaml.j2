@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{{ control_plane_advertise_address }}"
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: "{{ control_plane_kubeadm_version.stdout }}"
+{% if control_plane_endpoint %}
+controlPlaneEndpoint: "{{ control_plane_endpoint }}"
+{% endif %}
+networking:
+  podSubnet: "{{ control_plane_pod_network_cidr }}"
+  serviceSubnet: "{{ control_plane_service_cidr }}"
+---
+# Stored in the cluster at init; nodes that join later get the same settings.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+shutdownGracePeriod: "{{ control_plane_shutdown_grace_period }}"
+shutdownGracePeriodCriticalPods: "{{ control_plane_shutdown_grace_period_critical_pods }}"

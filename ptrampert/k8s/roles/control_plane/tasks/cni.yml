@@ -1,0 +1,31 @@
+---
+- name: Create the kube-flannel namespace
+  ansible.builtin.command:
+    cmd: kubectl apply -f -
+    stdin: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: kube-flannel
+        labels:
+          pod-security.kubernetes.io/enforce: privileged
+  register: control_plane_flannel_namespace
+  changed_when: "'unchanged' not in control_plane_flannel_namespace.stdout"
+
+- name: Install Flannel
+  kubernetes.core.helm:
+    name: flannel
+    chart_repo_url: https://flannel-io.github.io/flannel/
+    chart_ref: flannel
+    chart_version: "{{ control_plane_flannel_version }}"
+    release_namespace: kube-flannel
+    kubeconfig: "{{ control_plane_admin_kubeconfig }}"
+    values:
+      podCidr: "{{ control_plane_pod_network_cidr }}"
+      flannel:
+        args: "{{ control_plane_flannel_args }}"
+    wait: true
+
+- name: Wait for the node to become Ready
+  ansible.builtin.command: kubectl wait --for=condition=Ready node/{{ control_plane_node_name }} --timeout=300s
+  changed_when: false

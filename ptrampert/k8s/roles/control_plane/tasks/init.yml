@@ -1,0 +1,20 @@
+---
+- name: Read the installed kubeadm version
+  ansible.builtin.command: kubeadm version -o short
+  register: control_plane_kubeadm_version
+  changed_when: false
+
+# kubeadm reads this file only at init. Changing it afterwards has no effect
+# on the running cluster.
+- name: Write the kubeadm init configuration
+  ansible.builtin.template:
+    src: kubeadm-init.yaml.j2
+    dest: "{{ control_plane_kubeadm_config }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Run kubeadm init
+  ansible.builtin.command:
+    cmd: kubeadm init --config {{ control_plane_kubeadm_config }}
+    creates: "{{ control_plane_admin_kubeconfig }}"

@@ -1,0 +1,34 @@
+# Test VMs for ptrampert.k8s.
+#
+# K8S_TOPOLOGY=single (default): one control-plane node that also runs workloads.
+# K8S_TOPOLOGY=multi: one control-plane node and two workers.
+#
+# Each topology has a matching inventory under inventory/.
+
+TOPOLOGY = ENV.fetch("K8S_TOPOLOGY", "single")
+WORKERS = { "single" => 0, "multi" => 2 }.fetch(TOPOLOGY) do
+  abort "K8S_TOPOLOGY must be 'single' or 'multi', got '#{TOPOLOGY}'"
+end
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.provider "virtualbox" do |vb|
+    vb.cpus = 2
+    vb.memory = 4096
+    vb.linked_clone = true
+  end
+
+  config.vm.define "cp1" do |node|
+    node.vm.hostname = "cp1"
+    node.vm.network "private_network", ip: "192.168.56.10"
+  end
+
+  (1..WORKERS).each do |i|
+    config.vm.define "worker#{i}" do |node|
+      node.vm.hostname = "worker#{i}"
+      node.vm.network "private_network", ip: "192.168.56.#{10 + i}"
+    end
+  end
+end

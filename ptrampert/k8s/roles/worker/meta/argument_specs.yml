@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Join a Kubernetes worker node to the cluster.
+    description:
+      - Runs kubeadm join with a short-lived token issued by the control plane,
+        then waits for the node to become Ready.
+      - Requires ptrampert.k8s.node on this host and ptrampert.k8s.control_plane
+        on the control plane first.
+    options:
+      worker_control_plane_host:
+        type: str
+        default: "{{ groups['control_plane'][0] }}"
+        description:
+          - Control-plane host that issues join tokens.

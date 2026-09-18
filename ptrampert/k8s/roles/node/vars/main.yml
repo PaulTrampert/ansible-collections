@@ -1,0 +1,16 @@
+---
+node_kubernetes_minor: "{{ node_kubernetes_version.split('.')[0:2] | join('.') }}"
+
+node_kubernetes_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+
+node_kernel_modules:
+  - overlay
+  - br_netfilter
+
+node_sysctls:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1

@@ -1,0 +1,30 @@
+---
+- name: Create the Helm install directory
+  ansible.builtin.file:
+    path: "{{ control_plane_helm_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download Helm
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/{{ control_plane_helm_archive }}
+    checksum: sha256:https://get.helm.sh/{{ control_plane_helm_archive }}.sha256sum
+    dest: "{{ control_plane_helm_dir }}/{{ control_plane_helm_archive }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Extract Helm
+  ansible.builtin.unarchive:
+    src: "{{ control_plane_helm_dir }}/{{ control_plane_helm_archive }}"
+    dest: "{{ control_plane_helm_dir }}"
+    remote_src: true
+    creates: "{{ control_plane_helm_dir }}/linux-{{ control_plane_helm_arch }}/helm"
+
+- name: Link helm into PATH
+  ansible.builtin.file:
+    src: "{{ control_plane_helm_dir }}/linux-{{ control_plane_helm_arch }}/helm"
+    dest: /usr/local/bin/helm
+    state: link

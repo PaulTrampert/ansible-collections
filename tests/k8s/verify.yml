@@ -1,0 +1,34 @@
+---
+- name: Verify the cluster
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Read node Ready status
+      ansible.builtin.command: >-
+        kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+      register: verify_nodes
+      changed_when: false
+
+    - name: Check that every inventory host is a Ready node
+      vars:
+        verify_expected: "{{ groups['k8s_cluster'] | map('regex_replace', '$', '=True') | sort }}"
+      ansible.builtin.assert:
+        that:
+          - verify_nodes.stdout_lines | sort == verify_expected
+        fail_msg: "Nodes {{ verify_nodes.stdout_lines }}, expected {{ verify_expected }}"
+
+    - name: Wait for system pods to be Ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready pods --all --namespace {{ item }} --timeout=300s
+      loop: [kube-system, kube-flannel]
+      changed_when: false
+
+    # Exercises the CNI, CoreDNS, and kube-proxy (Service routing) together.
+    - name: Resolve the API server's Service name from a pod
+      ansible.builtin.command: >-
+        kubectl run verify-dns --image=busybox:1.37 --restart=Never --rm --attach --quiet
+        --command -- nslookup kubernetes.default.svc.cluster.local
+      register: verify_dns
+      changed_when: false
+      failed_when: verify_dns.rc != 0 or 'Address' not in verify_dns.stdout

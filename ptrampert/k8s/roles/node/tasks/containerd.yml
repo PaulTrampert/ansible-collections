@@ -1,0 +1,41 @@
+---
+- name: Pin containerd.io to the configured release series
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/containerd
+    content: |
+      Package: containerd.io
+      Pin: version {{ node_containerd_series }}.*
+      Pin-Priority: 1001
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install containerd
+  ansible.builtin.apt:
+    name: containerd.io
+    state: present
+
+- name: Configure containerd
+  ansible.builtin.template:
+    src: containerd-config.toml.j2
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart containerd
+
+- name: Enable and start containerd
+  ansible.builtin.systemd_service:
+    name: containerd
+    enabled: true
+    state: started
+
+- name: Point crictl at containerd
+  ansible.builtin.copy:
+    dest: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+    owner: root
+    group: root
+    mode: "0644"

@@ -1,0 +1,18 @@
+---
+# Kubernetes version for kubelet, kubeadm, and kubectl. The packages are held,
+# and the role refuses to change the version on a node that already has one:
+# Kubernetes upgrades follow the kubeadm upgrade procedure, not a package bump.
+node_kubernetes_version: "1.36.4"
+
+# containerd.io release series from Docker's apt repository. apt is pinned to
+# this series, so routine OS upgrades pick up patch releases only.
+node_containerd_series: "2.3"
+
+# Pod sandbox ("pause") image. Keep it in step with the one kubeadm expects for
+# node_kubernetes_version (see `kubeadm config images list`).
+node_sandbox_image: "registry.k8s.io/pause:3.10.2"
+
+# Address the kubelet registers for this node. Set it explicitly on hosts with
+# more than one interface, e.g. Vagrant VMs, whose NAT interface has the same
+# address on every VM.
+node_ip: "{{ ansible_facts['default_ipv4']['address'] }}"

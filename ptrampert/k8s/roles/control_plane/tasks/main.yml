@@ -1,0 +1,28 @@
+---
+- name: Check that this is the first control-plane node
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname == groups[control_plane_group][0]
+    fail_msg: >-
+      Joining additional control-plane nodes is not supported yet; only
+      {{ groups[control_plane_group][0] }} may run this role.
+    quiet: true
+
+- name: Initialize the cluster
+  ansible.builtin.import_tasks: init.yml
+
+- name: Install kubeconfigs for kubectl users
+  ansible.builtin.import_tasks: kubeconfig.yml
+
+- name: Install Helm
+  ansible.builtin.import_tasks: helm.yml
+
+- name: Configure the cluster through the API server
+  environment:
+    KUBECONFIG: "{{ control_plane_admin_kubeconfig }}"
+  block:
+    - name: Install the CNI plugin
+      ansible.builtin.import_tasks: cni.yml
+
+    - name: Configure control-plane scheduling
+      ansible.builtin.import_tasks: scheduling.yml

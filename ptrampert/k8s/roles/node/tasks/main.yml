@@ -1,0 +1,27 @@
+---
+- name: Check for a supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+    fail_msg: "ptrampert.k8s.node supports Ubuntu only (found {{ ansible_facts['distribution'] }})."
+    quiet: true
+
+- name: Disable swap
+  ansible.builtin.import_tasks: swap.yml
+
+- name: Configure kernel modules and sysctls
+  ansible.builtin.import_tasks: kernel.yml
+
+- name: Add apt repositories
+  ansible.builtin.import_tasks: repositories.yml
+
+- name: Install and configure containerd
+  ansible.builtin.import_tasks: containerd.yml
+
+- name: Install Kubernetes packages
+  ansible.builtin.import_tasks: kubernetes.yml
+
+# containerd must be running with its new config before kubeadm runs, which
+# may happen later in this same play.
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers

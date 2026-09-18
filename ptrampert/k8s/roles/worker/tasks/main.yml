@@ -1,0 +1,29 @@
+---
+- name: Check whether this node has joined the cluster
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: worker_kubelet_conf
+
+- name: Join the cluster
+  when: not worker_kubelet_conf.stat.exists
+  block:
+    # The bootstrap token in the join command expires after 15 minutes.
+    - name: Create a join command on the control plane
+      ansible.builtin.command: kubeadm token create --print-join-command --ttl 15m
+      delegate_to: "{{ worker_control_plane_host }}"
+      register: worker_join_command
+      changed_when: true
+      no_log: true
+
+    - name: Run kubeadm join
+      ansible.builtin.command:
+        cmd: "{{ worker_join_command.stdout }}"
+        creates: /etc/kubernetes/kubelet.conf
+      no_log: true
+
+- name: Wait for the node to become Ready
+  ansible.builtin.command: kubectl wait --for=condition=Ready node/{{ ansible_facts['nodename'] | lower }} --timeout=300s
+  delegate_to: "{{ worker_control_plane_host }}"
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false

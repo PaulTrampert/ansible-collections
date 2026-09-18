@@ -1,0 +1,12 @@
+---
+control_plane_admin_kubeconfig: /etc/kubernetes/admin.conf
+control_plane_kubeadm_config: /etc/kubernetes/kubeadm-init.yaml
+control_plane_node_name: "{{ ansible_facts['nodename'] | lower }}"
+
+control_plane_helm_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+control_plane_helm_dir: /usr/local/lib/helm-{{ control_plane_helm_version }}
+control_plane_helm_archive: helm-{{ control_plane_helm_version }}-linux-{{ control_plane_helm_arch }}.tar.gz
+
+control_plane_flannel_args: >-
+  {{ ['--ip-masq', '--kube-subnet-mgr']
+     + (['--iface=' ~ control_plane_flannel_iface] if control_plane_flannel_iface else []) }}

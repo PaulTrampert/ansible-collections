@@ -1,0 +1,74 @@
+---
+argument_specs:
+  main:
+    short_description: Bootstrap the Kubernetes control plane.
+    description:
+      - Runs kubeadm init on the first host in the control-plane group, installs
+        Helm, installs Flannel as the CNI plugin, and sets whether ordinary
+        workloads may run on the control-plane node.
+      - Requires ptrampert.k8s.node to have run on the host first.
+      - Joining additional control-plane nodes is not supported yet.
+    options:
+      control_plane_group:
+        type: str
+        default: control_plane
+        description:
+          - Inventory group holding the control-plane nodes.
+      control_plane_advertise_address:
+        type: str
+        default: "{{ ansible_facts['default_ipv4']['address'] }}"
+        description:
+          - Address the API server advertises to the rest of the cluster.
+      control_plane_endpoint:
+        type: str
+        default: ""
+        description:
+          - Stable DNS name or VIP (host[:port]) for the API server.
+          - Can only be set at init; required to add control-plane nodes later.
+      control_plane_pod_network_cidr:
+        type: str
+        default: "10.244.0.0/16"
+        description:
+          - Pod network range, shared by kubeadm and Flannel.
+      control_plane_service_cidr:
+        type: str
+        default: "10.96.0.0/12"
+        description:
+          - Service virtual IP range.
+      control_plane_schedulable:
+        type: bool
+        default: false
+        description:
+          - Allow ordinary workloads on the control-plane node.
+      control_plane_shutdown_grace_period:
+        type: str
+        default: "60s"
+        description:
+          - Total time the kubelet delays node shutdown so pods can stop cleanly.
+      control_plane_shutdown_grace_period_critical_pods:
+        type: str
+        default: "20s"
+        description:
+          - Part of the shutdown grace period reserved for critical pods.
+      control_plane_kubeconfig_users:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Users who get the cluster-admin kubeconfig as ~/.kube/config.
+      control_plane_helm_version:
+        type: str
+        default: "v4.3.0"
+        description:
+          - Helm release to install.
+      control_plane_flannel_version:
+        type: str
+        default: "v0.28.9"
+        description:
+          - Flannel Helm chart version.
+      control_plane_flannel_iface:
+        type: str
+        default: ""
+        description:
+          - Interface Flannel uses between nodes. Empty uses the interface with
+            the default route.

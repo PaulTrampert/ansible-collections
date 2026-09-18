@@ -1,0 +1,33 @@
+---
+- name: Install repository prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add Docker apt repository (for containerd.io)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    signed_by: https://download.docker.com/linux/ubuntu/gpg
+  register: node_docker_repo
+
+- name: Add Kubernetes apt repository
+  ansible.builtin.deb822_repository:
+    name: kubernetes
+    types: deb
+    uris: https://pkgs.k8s.io/core:/stable:/v{{ node_kubernetes_minor }}/deb/
+    suites: /
+    signed_by: https://pkgs.k8s.io/core:/stable:/v{{ node_kubernetes_minor }}/deb/Release.key
+  register: node_kubernetes_repo
+
+- name: Update apt cache after repository changes
+  ansible.builtin.apt:
+    update_cache: true
+  when: node_docker_repo is changed or node_kubernetes_repo is changed

@@ -1,0 +1,35 @@
+---
+argument_specs:
+  main:
+    short_description: Prepare a host to run as a Kubernetes node.
+    description:
+      - Disables swap, loads the kernel modules and sysctls Kubernetes needs,
+        installs containerd (pinned to a release series) and the kubelet,
+        kubeadm, and kubectl packages (held at a fixed version).
+      - Run on every node, control plane and worker, before
+        ptrampert.k8s.control_plane or ptrampert.k8s.worker.
+      - Supports Ubuntu only.
+    options:
+      node_kubernetes_version:
+        type: str
+        default: "1.36.4"
+        description:
+          - Kubernetes version (major.minor.patch) for kubelet, kubeadm, and kubectl.
+          - The role fails rather than change the version on a node that already
+            has these packages installed.
+      node_containerd_series:
+        type: str
+        default: "2.3"
+        description:
+          - containerd.io release series to pin apt to, as major.minor (e.g. "2.3",
+            patch releases only) or major (e.g. "2", minor releases too).
+      node_sandbox_image:
+        type: str
+        default: "registry.k8s.io/pause:3.10.2"
+        description:
+          - Pod sandbox image containerd uses; should match the one kubeadm expects.
+      node_ip:
+        type: str
+        default: "{{ ansible_facts['default_ipv4']['address'] }}"
+        description:
+          - Address the kubelet registers for this node.

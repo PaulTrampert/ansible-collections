@@ -1,0 +1,19 @@
+---
+k8s_cluster:
+  children:
+    control_plane:
+      hosts:
+        cp1:
+          ansible_host: 192.168.56.10
+    workers:
+      hosts: {}
+  vars:
+    ansible_user: vagrant
+    ansible_ssh_private_key_file: .vagrant/machines/{{ inventory_hostname }}/virtualbox/private_key
+    # eth0 is the VirtualBox NAT interface, identical on every VM; the cluster
+    # has to use the private network on eth1.
+    node_ip: "{{ ansible_host }}"
+    control_plane_advertise_address: "{{ ansible_host }}"
+    control_plane_flannel_iface: eth1
+    control_plane_kubeconfig_users: [vagrant]
+    control_plane_schedulable: true
