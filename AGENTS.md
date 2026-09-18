@@ -14,6 +14,8 @@ ptrampert/
     ├── plugins/          # custom modules, filters, lookups, etc.
     ├── roles/            # roles (create as needed)
     └── README.md
+tests/
+└── k8s/                  # Vagrant test harness for ptrampert.k8s (see Testing)
 ```
 
 ### Collections
@@ -38,7 +40,7 @@ When adding a new collection, scaffold it with `ansible-galaxy collection init p
 
 ## Tooling
 
-Available locally: `ansible-core` 2.21, `ansible-lint`, `yamllint`, `ansible-test`. Molecule is not installed.
+Available locally: `ansible-core` 2.21, `ansible-lint`, `yamllint`, Vagrant 2.4 with the VirtualBox provider.
 
 ```sh
 # Lint a collection
@@ -51,7 +53,29 @@ ansible-galaxy collection build ptrampert/k8s --output-path build/
 ansible-galaxy collection install build/ptrampert-k8s-*.tar.gz --force
 ```
 
-`ansible-test` requires the collection to sit under a directory path ending in `ansible_collections/ptrampert/k8s`, which this repo layout doesn't provide on its own. To run it, clone or symlink the repo into such a path first (e.g. `~/ansible_collections/ptrampert -> <repo>/ptrampert`) and run it from there.
+## Testing
+
+Roles are tested with Vagrant: bring up real VMs, run the roles against them with a test playbook, and check the result. Containers and `ansible-test integration` aren't suitable here because cluster setup needs multiple nodes, systemd, kernel modules, and real networking. (`ansible-test sanity`/`units` only become relevant if Python plugins are added under `plugins/`.)
+
+Test harnesses live outside the collection, under `tests/<collection>/` at the repo root (e.g. `tests/k8s/`), so they aren't included in the built collection tarball. Each harness contains:
+
+- `Vagrantfile` — defines the test VMs (e.g. control plane and worker nodes) and their private network.
+- `inventory` — static inventory for the VMs, grouped the way the roles expect.
+- `playbook.yml` — applies the roles under test, referenced by FQCN (`ptrampert.k8s.<role_name>`).
+- `ansible.cfg` — points `collections_path` at a directory where `ansible_collections/ptrampert` is a symlink to the repo's `ptrampert/`, so the playbook uses the working-tree roles without a build/install step.
+
+Workflow:
+
+```sh
+cd tests/k8s
+vagrant up                                # create VMs
+ansible-playbook playbook.yml             # converge
+ansible-playbook playbook.yml             # re-run: should report changed=0 (idempotence)
+# verify: e.g. vagrant ssh <control-plane> -c 'kubectl get nodes'
+vagrant destroy -f                        # tear down
+```
+
+Use `vagrant snapshot save`/`restore` to get back to a clean baseline quickly instead of rebuilding VMs between runs. A change to a role isn't done until it converges on fresh VMs and a second run reports no changes.
 
 ## Versioning
 
