@@ -30,3 +30,9 @@
     name: haproxy
     enabled: true
     state: started
+
+# Whatever runs later in the play has to see the configuration just written,
+# not the one HAProxy happened to start with. keepalived's health check is
+# usually the first thing to care.
+- name: Apply the pending reload
+  ansible.builtin.meta: flush_handlers

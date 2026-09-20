@@ -41,3 +41,8 @@
     name: keepalived
     enabled: true
     state: started
+
+# Leaving a reload queued until the end of the play means a later failure hides
+# a running daemon whose configuration no longer matches the file on disk.
+- name: Apply the pending reload
+  ansible.builtin.meta: flush_handlers
