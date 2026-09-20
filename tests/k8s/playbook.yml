@@ -26,3 +26,56 @@
   become: true
   roles:
     - ptrampert.k8s.worker
+
+# nfs1 exists only in the multi topology. In the others the group is empty and
+# this play is skipped, as is the provisioner below.
+- name: Export a share for the storage provider
+  hosts: nfs_servers
+  become: true
+  tasks:
+    - name: Install the NFS server
+      ansible.builtin.apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: true
+
+    - name: Create the exported directory
+      ansible.builtin.file:
+        path: "{{ nfs_export_path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0777"
+
+    # no_root_squash because the driver creates each volume's directory as
+    # root; a test export, not advice for a real one.
+    - name: Configure the export
+      ansible.builtin.copy:
+        content: |
+          {{ nfs_export_path }} {{ nfs_export_clients }}(rw,sync,no_subtree_check,no_root_squash)
+        dest: /etc/exports
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload the exports
+
+    - name: Start the NFS server
+      ansible.builtin.systemd_service:
+        name: nfs-server
+        state: started
+        enabled: true
+  handlers:
+    - name: Reload the exports
+      ansible.builtin.command: exportfs -ra
+      changed_when: true
+
+# Cluster-wide configuration, applied once from a control-plane node rather
+# than on every host in the group.
+- name: Install the NFS storage provider
+  hosts: control_plane[0]
+  become: true
+  tasks:
+    - name: Deploy the NFS CSI driver
+      ansible.builtin.include_role:
+        name: ptrampert.k8s.nfs_provisioner
+      when: groups['nfs_servers'] | length > 0

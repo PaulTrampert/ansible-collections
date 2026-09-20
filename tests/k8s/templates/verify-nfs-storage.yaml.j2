@@ -1,0 +1,61 @@
+---
+# A claim against the NFS class, written by a pod on one worker and read by a
+# pod on another. Node-local storage could not serve both: the point of the
+# class is that the volume follows the pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: verify-nfs
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ verify_nfs_class }}
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-nfs-writer
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: {{ verify_nfs_writer_node }}
+  containers:
+    - name: writer
+      image: busybox:1.37
+      command: [sh, -c, "echo 'written by verify-nfs-writer' > /data/probe"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-nfs
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-nfs-reader
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: {{ verify_nfs_reader_node }}
+  initContainers:
+    - name: wait-for-writer
+      image: busybox:1.37
+      command: [sh, -c, "until [ -f /data/probe ]; do sleep 1; done"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  containers:
+    - name: reader
+      image: busybox:1.37
+      command: [cat, /data/probe]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-nfs

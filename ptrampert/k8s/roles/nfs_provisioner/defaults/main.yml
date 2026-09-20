@@ -1,0 +1,58 @@
+---
+# csi-driver-nfs chart version. The chart's app version installs the matching
+# driver images.
+nfs_provisioner_version: "4.13.4"
+
+# Where the chart comes from. kubernetes-csi publishes it from the driver's own
+# repository rather than to a hosted registry.
+nfs_provisioner_chart_repo: https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+
+# Namespace the driver runs in.
+nfs_provisioner_namespace: kube-system
+
+# The NFS server, as a hostname or an address, and the path it exports.
+# Required: the role provisions volumes on an export that already exists and
+# does not build one. Both nodes and the driver must be able to reach it.
+nfs_provisioner_server: ""
+nfs_provisioner_share: ""
+
+# Directory under the share that holds the volumes. Empty puts each volume
+# directly under the share. Supports ${pvc.metadata.name},
+# ${pvc.metadata.namespace} and ${pv.metadata.name}.
+nfs_provisioner_sub_dir: ""
+
+nfs_provisioner_storage_class_name: nfs
+
+# Make this the class used by claims that name no class. Off by default, so a
+# cluster with a second storage provider does not have to take the default away
+# from this one.
+nfs_provisioner_storage_class_default: false
+
+# What happens to a volume's data when its claim is deleted. Delete discards
+# it; Retain leaves the volume behind for an administrator to clean up.
+# Deleting a pod, Deployment or StatefulSet never deletes the claim.
+nfs_provisioner_reclaim_policy: Delete
+
+# What the driver does with a volume's directory on the share when the volume
+# is deleted: remove it, leave it where it is, or rename it out of the way.
+nfs_provisioner_on_delete: delete
+
+# When a claim is bound to a volume. The whole point of an NFS-backed class is
+# that a volume is not tied to a node, so there is nothing to wait for the
+# scheduler to decide.
+nfs_provisioner_volume_binding_mode: Immediate
+
+# Mount options the nodes mount the share with.
+nfs_provisioner_mount_options:
+  - nfsvers=4.1
+
+# Permissions the driver gives each volume's directory after mounting it. Empty
+# leaves whatever the server creates, which is what an export that squashes
+# root wants.
+nfs_provisioner_mount_permissions: ""
+
+# Extra Helm chart values, merged over the ones the role builds.
+nfs_provisioner_chart_values: {}
+
+# Admin kubeconfig used to talk to the cluster.
+nfs_provisioner_kubeconfig: /etc/kubernetes/admin.conf

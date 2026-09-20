@@ -1,0 +1,23 @@
+---
+- name: Check that an export was given
+  ansible.builtin.assert:
+    that:
+      - nfs_provisioner_server | length > 0
+      - nfs_provisioner_share is match('/.*')
+    fail_msg: >-
+      nfs_provisioner_server and nfs_provisioner_share must name an export that
+      already exists, the share as an absolute path
+
+- name: Install the NFS CSI driver
+  kubernetes.core.helm:
+    name: "{{ nfs_provisioner_release }}"
+    chart_repo_url: "{{ nfs_provisioner_chart_repo }}"
+    chart_ref: "{{ nfs_provisioner_chart }}"
+    chart_version: "{{ nfs_provisioner_version }}"
+    release_namespace: "{{ nfs_provisioner_namespace }}"
+    create_namespace: true
+    kubeconfig: "{{ nfs_provisioner_kubeconfig }}"
+    values: >-
+      {{ nfs_provisioner_values
+         | combine(nfs_provisioner_chart_values, recursive=True) }}
+    wait: true

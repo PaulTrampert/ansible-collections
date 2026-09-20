@@ -11,3 +11,7 @@
   on the control-plane nodes themselves and floats `control_plane_vip` between them; set
   `control_plane_load_balancer: external` with `control_plane_endpoint` to use a load
   balancer outside the cluster instead.
+- Add an `nfs_provisioner` role: a `StorageClass` backed by an NFS export that every node
+  mounts, so a rescheduled pod keeps its data, provisioned by the kubernetes-csi NFS driver.
+  The export is an input; the role does not build an NFS server, and the nodes need no NFS
+  packages of their own.

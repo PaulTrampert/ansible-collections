@@ -1,0 +1,116 @@
+---
+argument_specs:
+  main:
+    short_description: Provision persistent volumes from an NFS export.
+    description:
+      - Installs the kubernetes-csi NFS driver and a StorageClass that creates
+        each volume as a directory under an NFS share. Every node mounts the
+        same share, so a pod keeps its data when it is rescheduled onto
+        another node.
+      - The export has to exist already. The role does not build an NFS server,
+        and nothing about it assumes the server is a Linux host rather than a
+        NAS or a cloud filer.
+      - The nodes need no NFS packages of their own. The driver's node plugin
+        carries its own NFS client and mounts the share from inside its
+        container.
+      - Runs on a single control-plane host, which needs kubectl access to the
+        cluster and the helm binary, both of which ptrampert.k8s.control_plane
+        leaves behind. It configures the cluster rather than the host, so
+        running it on more than one host at a time only repeats the work.
+    options:
+      nfs_provisioner_version:
+        type: str
+        default: "4.13.4"
+        description:
+          - Version of the csi-driver-nfs Helm chart to install.
+      nfs_provisioner_chart_repo:
+        type: str
+        default: https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+        description:
+          - Chart repository the driver is installed from.
+      nfs_provisioner_namespace:
+        type: str
+        default: kube-system
+        description:
+          - Namespace the driver runs in. Created if it does not exist.
+      nfs_provisioner_server:
+        type: str
+        default: ""
+        description:
+          - Hostname or address of the NFS server. Required. Every node has to
+            be able to reach it.
+      nfs_provisioner_share:
+        type: str
+        default: ""
+        description:
+          - Absolute path the server exports. Required.
+      nfs_provisioner_sub_dir:
+        type: str
+        default: ""
+        description:
+          - Directory under the share that holds the volumes. Empty puts each
+            volume directly under the share. The driver expands
+            ${pvc.metadata.name}, ${pvc.metadata.namespace} and
+            ${pv.metadata.name} in it.
+      nfs_provisioner_storage_class_name:
+        type: str
+        default: nfs
+        description:
+          - Name of the StorageClass the role creates.
+      nfs_provisioner_storage_class_default:
+        type: bool
+        default: false
+        description:
+          - Make this the class used by claims that name no class. Off by
+            default, so that a cluster which already has a storage provider
+            does not silently change which one a claim gets.
+      nfs_provisioner_reclaim_policy:
+        type: str
+        default: Delete
+        choices: [Delete, Retain]
+        description:
+          - What happens to a volume when its claim is deleted. Delete hands it
+            back to the driver, which applies nfs_provisioner_on_delete; Retain
+            leaves the volume for an administrator to clean up. Deleting a pod,
+            Deployment or StatefulSet does not delete the claim, so it does not
+            reach this.
+      nfs_provisioner_on_delete:
+        type: str
+        default: delete
+        choices: [delete, retain, archive]
+        description:
+          - What the driver does with a volume's directory on the share when
+            the volume is deleted. archive renames it out of the way instead of
+            removing it.
+      nfs_provisioner_volume_binding_mode:
+        type: str
+        default: Immediate
+        choices: [Immediate, WaitForFirstConsumer]
+        description:
+          - When a claim is bound to a volume. The volume is not tied to a
+            node, so there is nothing to be gained by waiting for the scheduler
+            to pick one.
+      nfs_provisioner_mount_options:
+        type: list
+        elements: str
+        default: [nfsvers=4.1]
+        description:
+          - Mount options the nodes mount the share with.
+      nfs_provisioner_mount_permissions:
+        type: str
+        default: ""
+        description:
+          - Permissions the driver sets on each volume's directory after
+            mounting it, as an octal string such as "0777". Empty leaves
+            whatever the server creates, which is what an export that squashes
+            root wants.
+      nfs_provisioner_chart_values:
+        type: dict
+        default: {}
+        description:
+          - Extra Helm chart values, merged over the ones the role builds.
+      nfs_provisioner_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig the role uses to talk to the cluster.

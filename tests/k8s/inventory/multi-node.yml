@@ -1,5 +1,6 @@
 ---
-# One control-plane node and two workers.
+# One control-plane node, two workers, and a host exporting a share for the
+# NFS storage provider.
 k8s_cluster:
   children:
     control_plane:
@@ -12,7 +13,22 @@ k8s_cluster:
           ansible_host: 192.168.56.21
         worker2:
           ansible_host: 192.168.56.22
+  vars:
+    # The export nfs1 serves, which the storage provider has to address.
+    nfs_provisioner_server: "{{ hostvars['nfs1']['ansible_host'] }}"
+    nfs_provisioner_share: "{{ nfs_export_path }}"
 
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}
+
+nfs_servers:
+  hosts:
+    nfs1:
+      ansible_host: 192.168.56.30
+
+# Both sides need the export: nfs1 serves it, the cluster consumes it.
+all:
+  vars:
+    nfs_export_path: /srv/nfs
+    nfs_export_clients: 192.168.56.0/24

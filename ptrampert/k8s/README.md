@@ -9,6 +9,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.node` | every node | Kubernetes host prerequisites: swap off, kernel modules and sysctls, containerd (pinned to a release series), kubelet/kubeadm/kubectl (held at a fixed version), kubelet node IP. |
 | `ptrampert.k8s.control_plane` | `control_plane` | A stable API server address, `kubeadm init` on the first node and `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
 | `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
+| `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -72,6 +73,31 @@ Run the playbook against the whole `control_plane` group rather than limiting to
 
 With `control_plane_load_balancer: external`, add the new node to the external load balancer's backends as well — the role does not manage it.
 
+## Storage over NFS
+
+Without a storage provider every `PersistentVolumeClaim` stays `Pending`, so a cluster that runs anything with state needs one. `ptrampert.k8s.nfs_provisioner` installs the kubernetes-csi NFS driver and a `StorageClass` that creates each volume as a directory under an NFS share. Every node mounts the same share, so a pod keeps its data when it is rescheduled onto another node.
+
+The export has to exist already, and both settings are required:
+
+```yaml
+nfs_provisioner_server: nfs.example.com
+nfs_provisioner_share: /exports/kubernetes
+```
+
+The role builds no NFS server. Nothing about it assumes one kind of server either: a NAS, a cloud filer or a Linux host all serve the same purpose, and choosing and sizing one is a decision about a particular site rather than about the cluster.
+
+The nodes need no NFS packages of their own. The driver's node plugin carries its own NFS client and mounts the share from inside its container.
+
+The class is not the cluster default unless asked, so a cluster that already has a storage provider does not silently change which one a claim with no class gets:
+
+```yaml
+nfs_provisioner_storage_class_default: true
+```
+
+Deleting a claim deletes the volume's directory on the share. Deleting a pod, Deployment or StatefulSet does not delete the claim, so ordinary redeployment keeps the data. Set `nfs_provisioner_on_delete: archive` to have the driver rename a deleted volume's directory out of the way instead of removing it, or `nfs_provisioner_reclaim_policy: Retain` to keep the volume itself when its claim goes away.
+
+Mount options default to `nfsvers=4.1` and are configurable, as is a `nfs_provisioner_sub_dir` under the share to keep the volumes in one place.
+
 ## Example playbook
 
 ```yaml
@@ -92,6 +118,14 @@ With `control_plane_load_balancer: external`, add the new node to the external l
   become: true
   roles:
     - ptrampert.k8s.worker
+
+# Configures the cluster, not the host, so it runs once rather than on every
+# control-plane node.
+- name: Install the storage provider
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - ptrampert.k8s.nfs_provisioner
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.

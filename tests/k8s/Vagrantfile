@@ -5,15 +5,15 @@
 # destroy one topology before bringing up another: the VMs share names.
 #
 #   single (default)  one control-plane node that also runs workloads
-#   multi             one control-plane node and two workers
+#   multi             one control-plane node, two workers, and an NFS server
 #   stacked-ha        three control-plane nodes load balancing for themselves
 #   external-lb       three control-plane nodes behind a separate HAProxy host
 
 TOPOLOGIES = {
-  "single"      => {control_planes: 1, workers: 0, load_balancer: false},
-  "multi"       => {control_planes: 1, workers: 2, load_balancer: false},
-  "stacked-ha"  => {control_planes: 3, workers: 0, load_balancer: false},
-  "external-lb" => {control_planes: 3, workers: 1, load_balancer: true},
+  "single"      => {control_planes: 1, workers: 0, load_balancer: false, nfs_server: false},
+  "multi"       => {control_planes: 1, workers: 2, load_balancer: false, nfs_server: true},
+  "stacked-ha"  => {control_planes: 3, workers: 0, load_balancer: false, nfs_server: false},
+  "external-lb" => {control_planes: 3, workers: 1, load_balancer: true, nfs_server: false},
 }
 
 TOPOLOGY = ENV.fetch("K8S_TOPOLOGY", "single")
@@ -27,6 +27,7 @@ SUBNET = "192.168.56"
 LOAD_BALANCER_HOST = 8
 FIRST_CONTROL_PLANE_HOST = 10
 FIRST_WORKER_HOST = 21
+NFS_SERVER_HOST = 30
 
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"
@@ -62,6 +63,19 @@ Vagrant.configure("2") do |config|
     config.vm.define "worker#{i + 1}" do |node|
       node.vm.hostname = "worker#{i + 1}"
       node.vm.network "private_network", ip: "#{SUBNET}.#{FIRST_WORKER_HOST + i}"
+    end
+  end
+
+  if SHAPE[:nfs_server]
+    config.vm.define "nfs1" do |node|
+      node.vm.hostname = "nfs1"
+      node.vm.network "private_network", ip: "#{SUBNET}.#{NFS_SERVER_HOST}"
+
+      # It only serves the export; it runs no part of the cluster.
+      node.vm.provider "virtualbox" do |vb|
+        vb.cpus = 1
+        vb.memory = 1024
+      end
     end
   end
 end

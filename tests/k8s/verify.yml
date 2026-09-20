@@ -104,3 +104,83 @@
             return_content: true
           register: verify_healthz
           failed_when: verify_healthz.content != 'ok'
+
+- name: Verify the NFS storage provider
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_nfs_class: "{{ nfs_provisioner_storage_class_name | default('nfs') }}"
+    verify_nfs_writer_node: "{{ groups['workers'][0] | default('') }}"
+    verify_nfs_reader_node: "{{ groups['workers'][-1] | default('') }}"
+  tasks:
+    # Only the multi topology has an NFS server, and it is also the only one
+    # with two workers to move a volume between.
+    - name: Check the NFS storage class
+      when: groups['nfs_servers'] | length > 0
+      block:
+        # Fails outright if the role's class is missing.
+        - name: Read the provisioner behind the NFS class
+          ansible.builtin.command: >-
+            kubectl get storageclass {{ verify_nfs_class }} -o jsonpath={.provisioner}
+          register: verify_nfs_provisioner
+          changed_when: false
+
+        - name: Check the class is provisioned by the NFS CSI driver
+          ansible.builtin.assert:
+            that:
+              - verify_nfs_provisioner.stdout == 'nfs.csi.k8s.io'
+            fail_msg: >-
+              Storage class {{ verify_nfs_class }} is provisioned by
+              {{ verify_nfs_provisioner.stdout }}
+
+        - name: Move a volume between nodes
+          block:
+            - name: Create a claim and pods on two different nodes
+              ansible.builtin.command:
+                cmd: kubectl apply -f -
+                stdin: "{{ lookup('ansible.builtin.template', 'templates/verify-nfs-storage.yaml.j2') }}"
+              changed_when: true
+
+            - name: Wait for the reading pod to finish
+              ansible.builtin.command: >-
+                kubectl wait --for=jsonpath={.status.phase}=Succeeded pod/verify-nfs-reader --timeout=300s
+              changed_when: false
+
+            - name: Read what the pod on the other node saw
+              ansible.builtin.command: kubectl logs pod/verify-nfs-reader
+              register: verify_nfs_data
+              changed_when: false
+
+            - name: Check it read what the first pod wrote
+              ansible.builtin.assert:
+                that:
+                  - verify_nfs_data.stdout == 'written by verify-nfs-writer'
+                fail_msg: >-
+                  Pod on {{ verify_nfs_reader_node }} read
+                  {{ verify_nfs_data.stdout | to_json }}
+
+            # The data belongs to the server, not to either node.
+            - name: Look for the volume on the NFS server
+              ansible.builtin.find:
+                paths: "{{ nfs_export_path }}"
+                patterns: probe
+                recurse: true
+              delegate_to: "{{ groups['nfs_servers'][0] }}"
+              register: verify_nfs_files
+
+            - name: Check the volume was created on the export
+              ansible.builtin.assert:
+                that:
+                  - verify_nfs_files.files | length == 1
+                fail_msg: >-
+                  Expected one volume under {{ nfs_export_path }} on
+                  {{ groups['nfs_servers'][0] }}, found
+                  {{ verify_nfs_files.files | map(attribute='path') | list }}
+          always:
+            - name: Remove the verification resources
+              ansible.builtin.command: >-
+                kubectl delete --ignore-not-found --wait=false
+                pod/verify-nfs-writer pod/verify-nfs-reader pvc/verify-nfs
+              changed_when: true
