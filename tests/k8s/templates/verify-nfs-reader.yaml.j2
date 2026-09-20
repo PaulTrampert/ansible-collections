@@ -1,0 +1,22 @@
+---
+# Applied only once the writer has exited, so the claim is mounted by one node
+# at a time, as ReadWriteOnce promises.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-nfs-reader
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: {{ verify_nfs_reader_node }}
+  containers:
+    - name: reader
+      image: busybox:1.37
+      command: [cat, /data/probe]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-nfs
