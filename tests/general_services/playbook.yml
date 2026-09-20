@@ -33,6 +33,8 @@
         content: |
           [Unit]
           Description=Static page for the ptrampert.general_services test harness
+          # It binds one address, so the interface has to be up first.
+          Wants=network-online.target
           After=network-online.target
 
           [Service]
