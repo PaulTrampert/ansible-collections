@@ -1,0 +1,17 @@
+---
+- name: Read the addresses on {{ lb_interface }}
+  ansible.builtin.command: ip -json -4 address show dev {{ lb_interface }}
+  register: lb_addresses
+  changed_when: false
+
+- name: Note whether this host holds the VIP
+  ansible.builtin.set_fact:
+    lb_holds_vip: >-
+      {{ lb_vip in (lb_addresses.stdout | from_json
+                    | map(attribute='addr_info') | flatten | map(attribute='local')) }}
+
+- name: Collect the hosts holding the VIP
+  ansible.builtin.set_fact:
+    lb_vip_holders: >-
+      {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'lb_holds_vip')))
+         | dict2items | selectattr('value') | map(attribute='key') | sort }}

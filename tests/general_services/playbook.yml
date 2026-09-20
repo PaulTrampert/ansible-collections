@@ -1,0 +1,61 @@
+---
+# Something for HAProxy to balance across: a static page naming the host that
+# served it, so verify.yml can tell the two backends apart.
+- name: Install the test backend
+  hosts: load_balancers
+  become: true
+  handlers:
+    - name: Restart the test backend
+      ansible.builtin.systemd_service:
+        name: lb-test-backend
+        state: restarted
+        daemon_reload: true
+  tasks:
+    - name: Create the backend document root
+      ansible.builtin.file:
+        path: /srv/lb-test
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the backend page
+      ansible.builtin.copy:
+        dest: /srv/lb-test/index.html
+        content: "{{ inventory_hostname }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the backend service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lb-test-backend.service
+        content: |
+          [Unit]
+          Description=Static page for the ptrampert.general_services test harness
+          After=network-online.target
+
+          [Service]
+          ExecStart=/usr/bin/python3 -m http.server {{ lb_backend_port }} --bind {{ ansible_host }} --directory /srv/lb-test
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart the test backend
+
+    - name: Enable and start the backend service
+      ansible.builtin.systemd_service:
+        name: lb-test-backend
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Configure the load balancer
+  hosts: load_balancers
+  become: true
+  roles:
+    - ptrampert.general_services.haproxy
+    - ptrampert.general_services.keepalived

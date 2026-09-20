@@ -1,0 +1,57 @@
+---
+load_balancers:
+  hosts:
+    lb1:
+      ansible_host: 192.168.56.20
+      # The higher priority, so the VIP comes back here after a failover.
+      keepalived_lb_priority: 101
+    lb2:
+      ansible_host: 192.168.56.21
+      keepalived_lb_priority: 100
+  vars:
+    ansible_user: vagrant
+    ansible_ssh_private_key_file: .vagrant/machines/{{ inventory_hostname }}/virtualbox/private_key
+
+    # eth0 is the VirtualBox NAT interface, identical on every VM; the VIP and
+    # the backends have to use the private network on eth1.
+    lb_interface: eth1
+    lb_vip: 192.168.56.30
+    lb_frontend_port: 80
+    lb_backend_port: 8080
+
+    # Every VM runs a backend, so the server list follows the inventory group
+    # rather than repeating the addresses from the Vagrantfile.
+    lb_backend:
+      name: "{{ inventory_hostname }}"
+      address: "{{ ansible_host }}:{{ lb_backend_port }}"
+    lb_backends: >-
+      {{ groups['load_balancers'] | map('extract', hostvars)
+         | map(attribute='lb_backend') | list }}
+
+    haproxy_listen:
+      - name: web
+        bind: "*:{{ lb_frontend_port }}"
+        mode: http
+        balance: roundrobin
+        options: [httplog, forwardfor]
+        server_options: "check inter 2s fall 2 rise 2"
+        servers: "{{ lb_backends }}"
+
+    keepalived_scripts:
+      # Connects to the frontend, so a host whose HAProxy is gone gives up the
+      # VIP. The bash redirect needs no extra package and works as the
+      # unprivileged user keepalived runs track scripts as.
+      chk_haproxy:
+        command: "/bin/bash -c '</dev/tcp/127.0.0.1/{{ lb_frontend_port }}'"
+        interval: 2
+        fall: 2
+        rise: 2
+
+    keepalived_vrrp_instances:
+      - name: web
+        interface: "{{ lb_interface }}"
+        state: BACKUP
+        virtual_router_id: 60
+        priority: "{{ keepalived_lb_priority }}"
+        virtual_ipaddresses: ["{{ lb_vip }}/24"]
+        track_scripts: [chk_haproxy]

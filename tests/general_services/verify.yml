@@ -1,0 +1,35 @@
+---
+- name: Verify the VIP is held by exactly one host
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Find the host holding the VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that exactly one host holds the VIP
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+        fail_msg: "Expected exactly one host to hold {{ lb_vip }}, got {{ lb_vip_holders }}"
+
+- name: Verify the VIP balances across the backends
+  hosts: load_balancers[0]
+  gather_facts: false
+  tasks:
+    - name: Request the VIP repeatedly
+      ansible.builtin.uri:
+        url: "http://{{ lb_vip }}:{{ lb_frontend_port }}/"
+        return_content: true
+      register: verify_requests
+      loop: "{{ range(groups['load_balancers'] | length * 4) | list }}"
+      delegate_to: localhost
+
+    - name: Check that every backend served some of the requests
+      vars:
+        verify_served_by: "{{ verify_requests.results | map(attribute='content') | map('trim') | unique | sort }}"
+      ansible.builtin.assert:
+        that:
+          - verify_served_by == groups['load_balancers'] | sort
+        fail_msg: >-
+          Expected {{ lb_vip }} to balance across {{ groups['load_balancers'] | sort }},
+          served by {{ verify_served_by }}

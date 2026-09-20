@@ -1,0 +1,82 @@
+---
+# Destructive: stops HAProxy on whichever host holds the VIP, checks that the VIP
+# moves and keeps serving, then starts it again and checks the VIP comes back.
+# Leaves the hosts as it found them.
+- name: Stop HAProxy on the host holding the VIP
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Find the host holding the VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that exactly one host holds the VIP to begin with
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+        fail_msg: "Expected exactly one host to hold {{ lb_vip }}, got {{ lb_vip_holders }}"
+
+    - name: Note which host to fail
+      ansible.builtin.set_fact:
+        failover_from: "{{ lb_vip_holders[0] }}"
+
+    - name: Stop HAProxy on {{ lb_vip_holders[0] }}
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: stopped
+      when: inventory_hostname == failover_from
+
+- name: Check that the VIP keeps serving
+  hosts: load_balancers[0]
+  gather_facts: false
+  tasks:
+    # Nothing listens on the VIP until another host takes it over, so this
+    # succeeding means the VIP moved to a host whose HAProxy is working.
+    - name: Wait for the VIP to serve again
+      ansible.builtin.wait_for:
+        host: "{{ lb_vip }}"
+        port: "{{ lb_frontend_port }}"
+        timeout: 60
+      delegate_to: localhost
+
+    - name: Check that the VIP still serves a page
+      ansible.builtin.uri:
+        url: "http://{{ lb_vip }}:{{ lb_frontend_port }}/"
+        return_content: true
+      register: failover_request
+      failed_when: failover_request.content | trim not in groups['load_balancers']
+      delegate_to: localhost
+
+- name: Give the VIP back
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Find the host holding the VIP now
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that the VIP moved to another host
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+          - lb_vip_holders[0] != failover_from
+        fail_msg: >-
+          Expected {{ lb_vip }} to move off {{ failover_from }},
+          held by {{ lb_vip_holders }}
+
+    - name: Start HAProxy again on {{ failover_from }}
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: started
+      when: inventory_hostname == failover_from
+
+    # It has the higher priority, so it takes the VIP back once its health check
+    # passes again.
+    - name: Wait for the VIP to return to {{ failover_from }}
+      ansible.builtin.command: ip -json -4 address show dev {{ lb_interface }}
+      register: failover_addresses
+      until: >-
+        lb_vip in (failover_addresses.stdout | from_json
+                   | map(attribute='addr_info') | flatten | map(attribute='local'))
+      retries: 20
+      delay: 3
+      changed_when: false
+      when: inventory_hostname == failover_from
