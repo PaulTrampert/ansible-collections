@@ -1,0 +1,95 @@
+---
+argument_specs:
+  main:
+    short_description: Provision persistent volumes from a directory on each node.
+    description:
+      - Installs Rancher's local-path-provisioner and a StorageClass that
+        creates each volume as a directory on the node where the pod that
+        claims it runs.
+      - The volume lives on one node, so a pod that claims it can only run on
+        that node. Storage a pod can take with it between nodes is a different
+        provider; the two classes can be installed side by side and a workload
+        picks the one it needs.
+      - Runs on a single control-plane host, which needs kubectl access to the
+        cluster and the helm binary, both of which ptrampert.k8s.control_plane
+        leaves behind. It configures the cluster rather than the host, so
+        running it on more than one host at a time only repeats the work.
+    options:
+      local_path_provisioner_version:
+        type: str
+        default: "v0.0.37"
+        description:
+          - local-path-provisioner release to install. Upstream publishes no
+            chart repository, so the role downloads the source archive for this
+            tag and installs the chart from it.
+      local_path_provisioner_namespace:
+        type: str
+        default: local-path-storage
+        description:
+          - Namespace the provisioner runs in. Created if it does not exist.
+      local_path_provisioner_path:
+        type: str
+        default: /opt/local-path-provisioner
+        description:
+          - Directory on each node that holds the volumes. The provisioner
+            creates it when it first provisions a volume there; mounting a
+            separate filesystem under it is not the role's business.
+      local_path_provisioner_node_paths:
+        type: dict
+        default: {}
+        description:
+          - Nodes that keep their volumes somewhere other than
+            local_path_provisioner_path, as node name to a list of absolute
+            paths. A node mapped to an empty list refuses to provision volumes.
+      local_path_provisioner_storage_class_name:
+        type: str
+        default: local-path
+        description:
+          - Name of the StorageClass the role creates.
+      local_path_provisioner_storage_class_default:
+        type: bool
+        default: false
+        description:
+          - Make this the class used by claims that name no class. Off by
+            default, so that adding a second storage provider later does not
+            have to take the default away from this one.
+      local_path_provisioner_reclaim_policy:
+        type: str
+        default: Delete
+        choices: [Delete, Retain]
+        description:
+          - What happens to a volume's data when its claim is deleted. Delete
+            discards it; Retain leaves the directory behind for an
+            administrator to clean up. Deleting a pod, Deployment or
+            StatefulSet does not delete the claim, so it does not reach this.
+      local_path_provisioner_volume_binding_mode:
+        type: str
+        default: WaitForFirstConsumer
+        choices: [WaitForFirstConsumer, Immediate]
+        description:
+          - When a claim is bound to a volume. WaitForFirstConsumer holds the
+            claim until a pod is scheduled, so the volume is created on the
+            node that will use it. Immediate picks a node before the scheduler
+            has had its say, which pins the pod to it.
+      local_path_provisioner_helper_image:
+        type: str
+        default: docker.io/library/busybox
+        description:
+          - Image of the short-lived pod the provisioner runs on a node to
+            create and remove volume directories.
+      local_path_provisioner_helper_image_tag:
+        type: str
+        default: "1.37"
+        description:
+          - Tag of the helper image. Pinned rather than latest, so a node that
+            pulls it next week runs what the cluster ran last week.
+      local_path_provisioner_chart_values:
+        type: dict
+        default: {}
+        description:
+          - Extra Helm chart values, merged over the ones the role builds.
+      local_path_provisioner_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig the role uses to talk to the cluster.

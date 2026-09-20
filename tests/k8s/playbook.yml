@@ -26,3 +26,11 @@
   become: true
   roles:
     - ptrampert.k8s.worker
+
+# Cluster-wide configuration, applied once from a control-plane node rather
+# than on every host in the group.
+- name: Install the storage provider
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - ptrampert.k8s.local_path_provisioner

@@ -1,0 +1,50 @@
+---
+- name: Check that every volume directory is an absolute path
+  vars:
+    local_path_provisioner_paths: >-
+      {{ local_path_provisioner_node_path_map | map(attribute='paths') | flatten }}
+  ansible.builtin.assert:
+    that:
+      - local_path_provisioner_paths | reject('match', '/.+') | length == 0
+    fail_msg: >-
+      Volume directories must be absolute paths below the root directory, got
+      {{ local_path_provisioner_paths }}
+
+- name: Create the chart directory
+  ansible.builtin.file:
+    path: "{{ local_path_provisioner_src_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Upstream publishes no chart repository, only the chart inside the source
+# tree, so the release tarball is where the chart comes from.
+- name: Download the local-path-provisioner source
+  ansible.builtin.get_url:
+    url: https://github.com/rancher/local-path-provisioner/archive/refs/tags/{{ local_path_provisioner_version }}.tar.gz
+    dest: "{{ local_path_provisioner_src_dir }}/{{ local_path_provisioner_archive }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Extract the chart
+  ansible.builtin.unarchive:
+    src: "{{ local_path_provisioner_src_dir }}/{{ local_path_provisioner_archive }}"
+    dest: "{{ local_path_provisioner_src_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ local_path_provisioner_chart_dir }}/Chart.yaml"
+
+- name: Install local-path-provisioner
+  kubernetes.core.helm:
+    name: "{{ local_path_provisioner_release }}"
+    chart_ref: "{{ local_path_provisioner_chart_dir }}"
+    release_namespace: "{{ local_path_provisioner_namespace }}"
+    create_namespace: true
+    kubeconfig: "{{ local_path_provisioner_kubeconfig }}"
+    values: >-
+      {{ local_path_provisioner_values
+         | combine(local_path_provisioner_chart_values, recursive=True) }}
+    wait: true

@@ -1,0 +1,46 @@
+---
+# Rancher local-path-provisioner release. The role installs the Helm chart from
+# the source tree at this tag; upstream publishes no chart repository.
+local_path_provisioner_version: "v0.0.37"
+
+# Namespace the provisioner runs in. Created if it does not exist.
+local_path_provisioner_namespace: local-path-storage
+
+# Directory on each node that holds the volumes. The provisioner creates it on
+# demand; putting a separate filesystem under it is the operator's business.
+local_path_provisioner_path: /opt/local-path-provisioner
+
+# Nodes that keep their volumes somewhere other than
+# local_path_provisioner_path, as node name to a list of directories. A node
+# mapped to an empty list refuses to provision volumes.
+#
+#   local_path_provisioner_node_paths:
+#     worker1: [/srv/local-path]
+local_path_provisioner_node_paths: {}
+
+local_path_provisioner_storage_class_name: local-path
+
+# Make this the class used by claims that name no class. Off by default, so a
+# second storage provider can be added without the two fighting over it.
+local_path_provisioner_storage_class_default: false
+
+# What happens to a volume's data when its claim is deleted. Delete discards
+# it; Retain leaves the directory behind for an administrator to clean up.
+# Deleting a pod, Deployment or StatefulSet never deletes the claim.
+local_path_provisioner_reclaim_policy: Delete
+
+# When a claim is bound to a volume. WaitForFirstConsumer holds the claim until
+# a pod is scheduled, so the volume lands on the node that will use it; binding
+# immediately would pin the pod to a node chosen at random.
+local_path_provisioner_volume_binding_mode: WaitForFirstConsumer
+
+# Image of the short-lived pod the provisioner runs on a node to create and
+# remove volume directories.
+local_path_provisioner_helper_image: docker.io/library/busybox
+local_path_provisioner_helper_image_tag: "1.37"
+
+# Extra Helm chart values, merged over the ones the role builds.
+local_path_provisioner_chart_values: {}
+
+# Admin kubeconfig used to talk to the cluster.
+local_path_provisioner_kubeconfig: /etc/kubernetes/admin.conf
