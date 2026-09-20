@@ -8,25 +8,28 @@ Each collection lives at `<namespace>/<collection>/`, mirroring the `ansible_col
 
 ```
 ptrampert/
-└── k8s/                  # ptrampert.k8s
-    ├── galaxy.yml        # collection metadata (name, version, dependencies)
-    ├── meta/runtime.yml  # requires_ansible, plugin routing
-    ├── plugins/          # custom modules, filters, lookups, etc.
-    ├── roles/            # roles (create as needed)
-    └── README.md
+├── k8s/                  # ptrampert.k8s
+│   ├── galaxy.yml        # collection metadata (name, version, dependencies)
+│   ├── meta/runtime.yml  # requires_ansible, plugin routing
+│   ├── plugins/          # custom modules, filters, lookups, etc.
+│   ├── roles/            # roles (create as needed)
+│   └── README.md
+└── general_services/     # ptrampert.general_services (same layout)
 tests/
-└── k8s/                  # Vagrant test harness for ptrampert.k8s (see Testing)
+├── k8s/                  # Vagrant test harness for ptrampert.k8s (see Testing)
+└── general_services/     # Vagrant test harness for ptrampert.general_services
 ```
 
 ### Collections
 
 - **ptrampert.k8s** — roles for setting up and maintaining a Kubernetes cluster (node preparation, cluster bootstrap, upgrades, and ongoing maintenance).
+- **ptrampert.general_services** — roles for services that aren't tied to any one application (HAProxy load balancing, keepalived VIPs).
 
 When adding a new collection, scaffold it with `ansible-galaxy collection init ptrampert.<name>` from the repo root and add it to the list above.
 
 ## Working on roles
 
-- Scaffold a new role with `ansible-galaxy role init --init-path ptrampert/k8s/roles <role_name>`, then delete any generated directories and files the role doesn't use.
+- Scaffold a new role with `ansible-galaxy role init --init-path ptrampert/<collection>/roles <role_name>`, then delete any generated directories and files the role doesn't use.
 - Role names use `snake_case` (collection roles cannot contain hyphens).
 - Refer to roles by their fully qualified name, e.g. `ptrampert.k8s.<role_name>`.
 - Use fully qualified module names everywhere (`ansible.builtin.copy`, not `copy`).

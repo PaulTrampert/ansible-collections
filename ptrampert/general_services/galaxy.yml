@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT-0
+---
+namespace: ptrampert
+name: general_services
+version: 1.0.0
+readme: README.md
+
+authors:
+  - Paul Trampert <paul.trampert@ptrampert.com>
+
+description: Roles for services that aren't tied to any one application, such as load balancing and failover
+
+license:
+  - MIT
+
+tags:
+  - infrastructure
+  - haproxy
+  - keepalived
+  - loadbalancer
+  - vrrp
+  - ha
+
+# The roles here use ansible.builtin only.
+dependencies: {}
+
+repository: https://github.com/PaulTrampert/ansible-collections
+issues: https://github.com/PaulTrampert/ansible-collections/issues
+
+build_ignore: []
