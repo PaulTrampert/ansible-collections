@@ -19,9 +19,10 @@
   ansible.builtin.import_tasks: init.yml
   when: control_plane_is_first | bool
 
+# Runs on the whole group: the first node needs the same look at who has
+# joined, and the credentials are issued once for all the nodes that have not.
 - name: Join the remaining control-plane nodes
   ansible.builtin.import_tasks: join.yml
-  when: not control_plane_is_first | bool
 
 - name: Install kubeconfigs for kubectl users
   ansible.builtin.import_tasks: kubeconfig.yml

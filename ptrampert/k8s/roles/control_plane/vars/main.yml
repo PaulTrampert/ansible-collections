@@ -7,6 +7,19 @@ control_plane_node_name: "{{ ansible_facts['nodename'] | lower }}"
 control_plane_first: "{{ groups[control_plane_group][0] }}"
 control_plane_is_first: "{{ inventory_hostname == control_plane_first }}"
 
+# The control-plane nodes other than the one that creates the cluster, and
+# those among them that have yet to join it.
+# reject rather than difference: difference is set-based, so its order varies
+# from run to run, which would shuffle the order nodes join in.
+control_plane_others: >-
+  {{ groups[control_plane_group] | reject('eq', control_plane_first)
+     | select('in', ansible_play_hosts) | list }}
+
+control_plane_joiners: >-
+  {{ dict(control_plane_others | zip(control_plane_others
+          | map('extract', hostvars, ['control_plane_kubelet_conf', 'stat', 'exists'])))
+     | dict2items | rejectattr('value') | map(attribute='key') | list }}
+
 # Port kubeadm gives the API server on each node. HAProxy balances across these.
 control_plane_api_port: 6443
 
@@ -39,7 +52,7 @@ control_plane_vip_priority: "{{ 150 - groups[control_plane_group].index(inventor
 # VRRP goes to the other control-plane nodes by unicast, which works on
 # networks that do not carry multicast.
 control_plane_vip_peers: >-
-  {{ groups[control_plane_group] | difference([inventory_hostname])
+  {{ groups[control_plane_group] | reject('eq', inventory_hostname)
      | map('extract', hostvars, 'control_plane_api_address') | list }}
 
 # Every node's HAProxy balances across every API server, so the VIP works

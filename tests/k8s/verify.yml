@@ -15,7 +15,7 @@
     - name: Check the cluster uses the expected control plane endpoint
       vars:
         verify_endpoint: >-
-          {{ control_plane_endpoint
+          {{ control_plane_endpoint | default('')
              if (control_plane_load_balancer | default('stacked')) == 'external'
              else control_plane_vip ~ ':' ~ (control_plane_lb_port | default(8443)) }}
       ansible.builtin.assert:
