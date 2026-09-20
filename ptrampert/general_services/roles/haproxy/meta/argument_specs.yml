@@ -1,0 +1,128 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure HAProxy.
+    description:
+      - Installs HAProxy and writes its configuration from a list of listener
+        definitions, so the role is not tied to any particular service.
+      - Owns only the HAProxy package, configuration file, and service. It sets
+        no sysctls and no firewall rules, so it is safe on a host that has
+        another job, such as a Kubernetes control-plane node.
+      - Supports Ubuntu only.
+    options:
+      haproxy_listen:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Listeners to serve, each rendered as an HAProxy C(listen) section.
+        options:
+          name:
+            type: str
+            required: true
+            description:
+              - Name of the section, as it appears in logs and statistics.
+          bind:
+            type: raw
+            required: true
+            description:
+              - Address to listen on, e.g. C(*:8443) or C(192.0.2.1:443). A list
+                of addresses binds all of them.
+          mode:
+            type: str
+            default: tcp
+            choices: [tcp, http]
+            description:
+              - Whether HAProxy proxies the connection at layer 4 or parses HTTP.
+          balance:
+            type: str
+            default: roundrobin
+            description:
+              - Load balancing algorithm. Empty leaves HAProxy's default.
+          options:
+            type: list
+            elements: str
+            default: []
+            description:
+              - Values for C(option) lines, e.g. C(tcplog) or C(httplog).
+          timeouts:
+            type: dict
+            default: {}
+            description:
+              - Timeouts for this listener, overriding haproxy_timeouts.
+          server_options:
+            type: str
+            default: ""
+            description:
+              - Options appended to every server in this listener, e.g.
+                C(check inter 2s fall 3 rise 2).
+          servers:
+            type: list
+            elements: dict
+            required: true
+            description:
+              - Backends to balance across.
+            options:
+              name:
+                type: str
+                required: true
+                description:
+                  - Name of the backend, as it appears in logs and statistics.
+              address:
+                type: str
+                required: true
+                description:
+                  - Backend address as host:port.
+              options:
+                type: str
+                description:
+                  - Options for this backend, replacing the listener's
+                    server_options.
+          extra:
+            type: list
+            elements: str
+            default: []
+            description:
+              - Raw configuration lines added to this listener, for directives
+                this role has no option for (e.g. C(option httpchk GET /healthz)).
+      haproxy_log:
+        type: str
+        default: "/dev/log local0"
+        description:
+          - Argument to C(log) in the global section.
+      haproxy_maxconn:
+        type: int
+        default: 2000
+        description:
+          - Maximum number of concurrent connections.
+      haproxy_timeouts:
+        type: dict
+        default:
+          connect: "5s"
+          client: "50s"
+          server: "50s"
+        description:
+          - Timeouts for the defaults section, rendered as C(timeout <name> <value>).
+      haproxy_global_extra:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Raw configuration lines added to the global section.
+      haproxy_defaults_extra:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Raw configuration lines added to the defaults section.
+      haproxy_stats_bind:
+        type: str
+        default: ""
+        description:
+          - Address for the statistics page, e.g. C(127.0.0.1:8404). Empty means
+            no statistics listener.
+      haproxy_stats_uri:
+        type: str
+        default: "/stats"
+        description:
+          - Path the statistics page is served at.

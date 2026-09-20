@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+global
+  log {{ haproxy_log }}
+  chroot /var/lib/haproxy
+  stats socket /run/haproxy/admin.sock mode 660 level admin
+  stats timeout 30s
+  user haproxy
+  group haproxy
+  maxconn {{ haproxy_maxconn }}
+{% for line in haproxy_global_extra %}
+  {{ line }}
+{% endfor %}
+
+defaults
+  log global
+{% for name, value in haproxy_timeouts.items() %}
+  timeout {{ name }} {{ value }}
+{% endfor %}
+{% for line in haproxy_defaults_extra %}
+  {{ line }}
+{% endfor %}
+{% for listener in haproxy_listen %}
+
+listen {{ listener.name }}
+{% for bind in ([listener.bind] if listener.bind is string else listener.bind) %}
+  bind {{ bind }}
+{% endfor %}
+  mode {{ listener.mode | default('tcp', true) }}
+{% if listener.balance | default('', true) %}
+  balance {{ listener.balance }}
+{% endif %}
+{% for option in listener.options | default([], true) %}
+  option {{ option }}
+{% endfor %}
+{% for name, value in (listener.timeouts | default({}, true)).items() %}
+  timeout {{ name }} {{ value }}
+{% endfor %}
+{% for line in listener.extra | default([], true) %}
+  {{ line }}
+{% endfor %}
+{% for server in listener.servers %}
+{% set server_options = server.options | default(listener.server_options | default('', true), true) %}
+  server {{ server.name }} {{ server.address }}{{ ' ' ~ server_options if server_options else '' }}
+{% endfor %}
+{% endfor %}
+{% if haproxy_stats_bind %}
+
+listen stats
+  bind {{ haproxy_stats_bind }}
+  mode http
+  stats enable
+  stats uri {{ haproxy_stats_uri }}
+  stats refresh 10s
+{% endif %}

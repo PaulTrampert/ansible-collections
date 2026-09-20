@@ -1,0 +1,26 @@
+---
+# Listeners HAProxy serves, each rendered as a `listen` section. See
+# meta/argument_specs.yml for the shape of an entry.
+haproxy_listen: []
+
+# Where HAProxy sends its logs, as the argument to `log` in the global section.
+haproxy_log: "/dev/log local0"
+
+haproxy_maxconn: 2000
+
+# Timeouts for the defaults section, rendered as `timeout <name> <value>`. A
+# listener can override them with its own `timeouts`.
+haproxy_timeouts:
+  connect: "5s"
+  client: "50s"
+  server: "50s"
+
+# Raw configuration lines appended to the global and defaults sections, for
+# anything this role has no variable for.
+haproxy_global_extra: []
+haproxy_defaults_extra: []
+
+# Address for the built-in statistics page, e.g. "127.0.0.1:8404". Empty means
+# no statistics listener.
+haproxy_stats_bind: ""
+haproxy_stats_uri: "/stats"

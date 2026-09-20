@@ -1,0 +1,7 @@
+---
+# A reload hands the listeners to a new worker instead of dropping them, so
+# traffic through a VIP on this host survives a configuration change.
+- name: Reload haproxy
+  ansible.builtin.systemd_service:
+    name: haproxy
+    state: reloaded
