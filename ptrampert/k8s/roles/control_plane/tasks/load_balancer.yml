@@ -51,7 +51,10 @@
         priority: "{{ control_plane_vip_priority }}"
         virtual_ipaddresses:
           - "{{ control_plane_vip_cidr }}"
-        unicast_src_ip: "{{ control_plane_api_address }}"
+        # Unicast VRRP, which works on networks that do not carry multicast.
+        # A lone control-plane node has no peers, and keepalived refuses a
+        # unicast source with nobody to send to, so it goes without.
+        unicast_src_ip: "{{ control_plane_api_address if control_plane_vip_peers else '' }}"
         unicast_peers: "{{ control_plane_vip_peers }}"
         track_scripts:
           - chk_kube_apiserver_lb

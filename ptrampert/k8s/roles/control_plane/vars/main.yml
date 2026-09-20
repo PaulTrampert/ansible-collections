@@ -49,8 +49,7 @@ control_plane_vip_cidr: >-
 # Highest priority to the first host in the group, so the VIP settles there.
 control_plane_vip_priority: "{{ 150 - groups[control_plane_group].index(inventory_hostname) }}"
 
-# VRRP goes to the other control-plane nodes by unicast, which works on
-# networks that do not carry multicast.
+# The other control-plane nodes, as VRRP unicast peers.
 control_plane_vip_peers: >-
   {{ groups[control_plane_group] | reject('eq', inventory_hostname)
      | map('extract', hostvars, 'control_plane_api_address') | list }}
