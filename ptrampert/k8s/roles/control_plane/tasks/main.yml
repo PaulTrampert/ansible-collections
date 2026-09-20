@@ -1,15 +1,27 @@
 ---
-- name: Check that this is the first control-plane node
-  ansible.builtin.assert:
-    that:
-      - inventory_hostname == groups[control_plane_group][0]
-    fail_msg: >-
-      Joining additional control-plane nodes is not supported yet; only
-      {{ groups[control_plane_group][0] }} may run this role.
-    quiet: true
+# Set as facts rather than read from defaults, so that every host in the play
+# can look up the others through hostvars when building the load balancer.
+- name: Record how this node is reached
+  ansible.builtin.set_fact:
+    control_plane_api_address: "{{ control_plane_advertise_address }}"
+    control_plane_lb_server:
+      name: "{{ inventory_hostname }}"
+      address: "{{ control_plane_advertise_address }}:{{ control_plane_api_port }}"
+
+- name: Check the control-plane configuration
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Set up the stacked API server load balancer
+  ansible.builtin.import_tasks: load_balancer.yml
+  when: control_plane_load_balancer == 'stacked'
 
 - name: Initialize the cluster
   ansible.builtin.import_tasks: init.yml
+  when: control_plane_is_first | bool
+
+- name: Join the remaining control-plane nodes
+  ansible.builtin.import_tasks: join.yml
+  when: not control_plane_is_first | bool
 
 - name: Install kubeconfigs for kubectl users
   ansible.builtin.import_tasks: kubeconfig.yml
@@ -21,8 +33,15 @@
   environment:
     KUBECONFIG: "{{ control_plane_admin_kubeconfig }}"
   block:
+    # Cluster-wide, so only the node that created the cluster installs it.
+    # Nodes joining later pick up the DaemonSet on their own.
     - name: Install the CNI plugin
       ansible.builtin.import_tasks: cni.yml
+      when: control_plane_is_first | bool
+
+    - name: Wait for the node to become Ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready node/{{ control_plane_node_name }} --timeout=300s
+      changed_when: false
 
     - name: Configure control-plane scheduling
       ansible.builtin.import_tasks: scheduling.yml

@@ -1,0 +1,40 @@
+---
+- name: Check whether this node has joined the cluster
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: control_plane_kubelet_conf
+
+- name: Join the cluster as a control-plane node
+  when: not control_plane_kubelet_conf.stat.exists
+  # Each control-plane node is also an etcd member, and kubeadm adds members
+  # one at a time. Joining two at once races them into the same etcd cluster.
+  throttle: 1
+  block:
+    # Both credentials expire on their own: the certificate key after two
+    # hours, the token after the ttl below. New ones are issued per node.
+    - name: Upload the control-plane certificates
+      ansible.builtin.command: kubeadm init phase upload-certs --upload-certs
+      delegate_to: "{{ control_plane_first }}"
+      register: control_plane_upload_certs
+      changed_when: true
+      no_log: true
+
+    - name: Create a join command on the first control-plane node
+      ansible.builtin.command: kubeadm token create --print-join-command --ttl 15m
+      delegate_to: "{{ control_plane_first }}"
+      register: control_plane_join_command
+      changed_when: true
+      no_log: true
+
+    # The printed command already points at the cluster's stable endpoint.
+    # --control-plane turns the join into a control-plane one, and the
+    # advertise address keeps the API server and etcd off the wrong interface.
+    - name: Run kubeadm join
+      ansible.builtin.command:
+        cmd: >-
+          {{ control_plane_join_command.stdout }}
+          --control-plane
+          --certificate-key {{ control_plane_upload_certs.stdout_lines | last | trim }}
+          --apiserver-advertise-address {{ control_plane_advertise_address }}
+        creates: /etc/kubernetes/kubelet.conf
+      no_log: true

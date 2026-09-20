@@ -25,7 +25,3 @@
       flannel:
         args: "{{ control_plane_flannel_args }}"
     wait: true
-
-- name: Wait for the node to become Ready
-  ansible.builtin.command: kubectl wait --for=condition=Ready node/{{ control_plane_node_name }} --timeout=300s
-  changed_when: false

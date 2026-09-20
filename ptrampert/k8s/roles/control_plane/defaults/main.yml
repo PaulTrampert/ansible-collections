@@ -1,13 +1,51 @@
 ---
 # Inventory group holding the control-plane nodes. The first host in it
-# bootstraps the cluster with kubeadm init.
+# bootstraps the cluster with kubeadm init; the rest join it.
 control_plane_group: control_plane
 
 # Address the API server advertises to the rest of the cluster.
 control_plane_advertise_address: "{{ ansible_facts['default_ipv4']['address'] }}"
 
-# Stable DNS name or VIP (host[:port]) for the API server. Set this if the
-# cluster may ever get more control-plane nodes: it can't be added after init.
+# How clients reach the API server at one address that survives losing a node.
+# kubeadm writes this address into every kubeconfig and certificate at init and
+# it cannot be changed afterwards, so the role always configures one: a cluster
+# started without it can never gain a second control-plane node.
+#
+#   stacked  - this role runs HAProxy and keepalived on the control-plane nodes
+#              themselves, floating control_plane_vip between them.
+#   external - something outside the cluster balances the API servers; give its
+#              address as control_plane_endpoint.
+control_plane_load_balancer: stacked
+
+# Virtual address the control-plane nodes float between themselves, without a
+# prefix length (e.g. "192.0.2.10"). Required when stacked.
+control_plane_vip: ""
+
+# Prefix length the VIP is added with. Empty takes it from the interface the
+# VIP lands on.
+control_plane_vip_prefix: ""
+
+# Interface keepalived sends VRRP on and adds the VIP to. Empty picks the
+# interface holding control_plane_advertise_address.
+control_plane_vip_interface: ""
+
+# VRRP router ID, 1-255. Must differ from every other VRRP group on the same
+# network.
+control_plane_vip_router_id: 51
+
+# Port HAProxy serves the API server on. It cannot be 6443: kube-apiserver
+# already has that port on these hosts.
+control_plane_lb_port: 8443
+
+# Timeouts for the API server listener. Watches are long-lived connections, so
+# these are much longer than a load balancer's usual defaults.
+control_plane_lb_timeouts:
+  connect: "5s"
+  client: "1h"
+  server: "1h"
+
+# Address (host[:port]) of the external load balancer. Required when
+# control_plane_load_balancer is "external", ignored otherwise.
 control_plane_endpoint: ""
 
 control_plane_pod_network_cidr: "10.244.0.0/16"

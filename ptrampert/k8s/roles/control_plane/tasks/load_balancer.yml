@@ -1,0 +1,57 @@
+---
+# HAProxy runs on every control-plane node and balances across all of them, so
+# the VIP serves the API wherever keepalived has put it — including on a node
+# whose own API server is down, or has not been created yet.
+- name: Balance the API servers
+  ansible.builtin.include_role:
+    name: ptrampert.general_services.haproxy
+  vars:
+    haproxy_listen:
+      - name: kube-apiserver
+        bind: "*:{{ control_plane_lb_port }}"
+        mode: tcp
+        balance: roundrobin
+        # The API server answers /healthz without credentials, so the check
+        # tells a running API server from a listening socket.
+        options:
+          - tcplog
+          - httpchk
+        extra:
+          - "http-check send meth GET uri /healthz"
+          - "http-check expect status 200"
+        timeouts: "{{ control_plane_lb_timeouts }}"
+        server_options: "check check-ssl verify none inter 2s fall 3 rise 2"
+        servers: "{{ control_plane_lb_servers }}"
+
+- name: Float the API server address across the control-plane nodes
+  ansible.builtin.include_role:
+    name: ptrampert.general_services.keepalived
+  vars:
+    keepalived_scripts:
+      # Connects to the local HAProxy frontend, which answers whenever HAProxy
+      # is running, even before any API server exists. That is what lets the
+      # VIP be up for the kubeadm init that creates the first one. Checking the
+      # API server instead would leave nobody holding the VIP at bootstrap, and
+      # would gain nothing later: every node's HAProxy has every API server as
+      # a backend, so "no backend is up" means the cluster is down and moving
+      # the VIP elsewhere would not help.
+      chk_kube_apiserver_lb:
+        command: "/bin/bash -c '</dev/tcp/127.0.0.1/{{ control_plane_lb_port }}'"
+        interval: 2
+        fall: 2
+        rise: 2
+
+    keepalived_vrrp_instances:
+      - name: kube-apiserver
+        interface: "{{ control_plane_vip_device }}"
+        # BACKUP everywhere: let the election decide rather than have a node
+        # claim the address before its HAProxy is up.
+        state: BACKUP
+        virtual_router_id: "{{ control_plane_vip_router_id }}"
+        priority: "{{ control_plane_vip_priority }}"
+        virtual_ipaddresses:
+          - "{{ control_plane_vip_cidr }}"
+        unicast_src_ip: "{{ control_plane_api_address }}"
+        unicast_peers: "{{ control_plane_vip_peers }}"
+        track_scripts:
+          - chk_kube_apiserver_lb

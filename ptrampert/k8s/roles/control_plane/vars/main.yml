@@ -3,6 +3,51 @@ control_plane_admin_kubeconfig: /etc/kubernetes/admin.conf
 control_plane_kubeadm_config: /etc/kubernetes/kubeadm-init.yaml
 control_plane_node_name: "{{ ansible_facts['nodename'] | lower }}"
 
+# The host that runs kubeadm init; every other host in the group joins it.
+control_plane_first: "{{ groups[control_plane_group][0] }}"
+control_plane_is_first: "{{ inventory_hostname == control_plane_first }}"
+
+# Port kubeadm gives the API server on each node. HAProxy balances across these.
+control_plane_api_port: 6443
+
+# What kubeadm writes into every kubeconfig and certificate as the cluster's
+# stable address.
+control_plane_api_endpoint: >-
+  {{ control_plane_endpoint if control_plane_load_balancer == 'external'
+     else control_plane_vip ~ ':' ~ control_plane_lb_port }}
+
+# The interface facts for the address the API server advertises, used to work
+# out where the VIP belongs when it has not been said explicitly.
+control_plane_advertise_facts: >-
+  {{ ansible_facts | dict2items
+     | selectattr('value.device', 'defined')
+     | selectattr('value.ipv4.address', 'defined')
+     | selectattr('value.ipv4.address', 'eq', control_plane_advertise_address)
+     | map(attribute='value') | list }}
+
+control_plane_vip_device: >-
+  {{ control_plane_vip_interface
+     or (control_plane_advertise_facts | map(attribute='device') | first | default('', true)) }}
+
+control_plane_vip_cidr: >-
+  {{ control_plane_vip }}/{{ control_plane_vip_prefix
+     or (control_plane_advertise_facts | map(attribute='ipv4.prefix') | first | default(24, true)) }}
+
+# Highest priority to the first host in the group, so the VIP settles there.
+control_plane_vip_priority: "{{ 150 - groups[control_plane_group].index(inventory_hostname) }}"
+
+# VRRP goes to the other control-plane nodes by unicast, which works on
+# networks that do not carry multicast.
+control_plane_vip_peers: >-
+  {{ groups[control_plane_group] | difference([inventory_hostname])
+     | map('extract', hostvars, 'control_plane_api_address') | list }}
+
+# Every node's HAProxy balances across every API server, so the VIP works
+# wherever keepalived puts it.
+control_plane_lb_servers: >-
+  {{ groups[control_plane_group]
+     | map('extract', hostvars, 'control_plane_lb_server') | list }}
+
 control_plane_helm_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
 control_plane_helm_dir: /usr/local/lib/helm-{{ control_plane_helm_version }}
 control_plane_helm_archive: helm-{{ control_plane_helm_version }}-linux-{{ control_plane_helm_arch }}.tar.gz

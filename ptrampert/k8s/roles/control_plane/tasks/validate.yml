@@ -1,0 +1,51 @@
+---
+- name: Check that every control-plane node is in this play
+  vars:
+    control_plane_missing: >-
+      {{ groups[control_plane_group]
+         | reject('in', ansible_play_hosts_all) | list }}
+  ansible.builtin.assert:
+    that:
+      - control_plane_missing | length == 0
+    fail_msg: >-
+      The control-plane nodes have to be configured together, because each one
+      needs the addresses of the others: {{ control_plane_missing | join(', ') }}
+      {{ 'is' if control_plane_missing | length == 1 else 'are' }} in
+      {{ control_plane_group }} but not in this play. Run against the whole
+      group rather than limiting to one host.
+    quiet: true
+
+- name: Check the stacked load-balancer configuration
+  when: control_plane_load_balancer == 'stacked'
+  block:
+    - name: Check that a virtual address is configured
+      ansible.builtin.assert:
+        that:
+          - control_plane_vip | length > 0
+        fail_msg: >-
+          control_plane_load_balancer is "stacked", so control_plane_vip must
+          give the address the control-plane nodes float between themselves.
+          Set control_plane_load_balancer to "external" to use a load balancer
+          outside the cluster instead.
+        quiet: true
+
+    - name: Check that the virtual address has an interface
+      ansible.builtin.assert:
+        that:
+          - control_plane_vip_device | length > 0
+        fail_msg: >-
+          No interface on this host holds
+          {{ control_plane_advertise_address }}, so the role cannot tell where
+          the VIP belongs. Set control_plane_vip_interface, or correct
+          control_plane_advertise_address.
+        quiet: true
+
+- name: Check that an external load balancer has an address
+  when: control_plane_load_balancer == 'external'
+  ansible.builtin.assert:
+    that:
+      - control_plane_endpoint | length > 0
+    fail_msg: >-
+      control_plane_load_balancer is "external", so control_plane_endpoint must
+      give the address of the load balancer in front of the API servers.
+    quiet: true

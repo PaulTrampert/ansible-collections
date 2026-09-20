@@ -9,9 +9,7 @@ nodeRegistration:
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
 kubernetesVersion: "{{ control_plane_kubeadm_version.stdout }}"
-{% if control_plane_endpoint %}
-controlPlaneEndpoint: "{{ control_plane_endpoint }}"
-{% endif %}
+controlPlaneEndpoint: "{{ control_plane_api_endpoint }}"
 networking:
   podSubnet: "{{ control_plane_pod_network_cidr }}"
   serviceSubnet: "{{ control_plane_service_cidr }}"

@@ -1,30 +1,91 @@
 ---
 argument_specs:
   main:
-    short_description: Bootstrap the Kubernetes control plane.
+    short_description: Bootstrap and grow the Kubernetes control plane.
     description:
-      - Runs kubeadm init on the first host in the control-plane group, installs
-        Helm, installs Flannel as the CNI plugin, and sets whether ordinary
-        workloads may run on the control-plane node.
+      - Runs kubeadm init on the first host in the control-plane group and
+        kubeadm join on the rest, installs Helm, installs Flannel as the CNI
+        plugin, and sets whether ordinary workloads may run on each node.
+      - Gives the cluster a stable API server address, either by running
+        HAProxy and keepalived on the control-plane nodes themselves (the
+        default) or by pointing at a load balancer outside the cluster. kubeadm
+        fixes that address at init and it cannot be changed afterwards, so a
+        cluster is configured with one whether or not it has a second
+        control-plane node yet.
+      - Adding a control-plane node is a matter of putting it in the
+        control-plane group and running the role again. Run the role against
+        the whole group, not one host at a time, because each node needs the
+        addresses of the others.
       - Requires ptrampert.k8s.node to have run on the host first.
-      - Joining additional control-plane nodes is not supported yet.
     options:
       control_plane_group:
         type: str
         default: control_plane
         description:
-          - Inventory group holding the control-plane nodes.
+          - Inventory group holding the control-plane nodes. The first host in
+            it creates the cluster; the rest join it.
       control_plane_advertise_address:
         type: str
         default: "{{ ansible_facts['default_ipv4']['address'] }}"
         description:
-          - Address the API server advertises to the rest of the cluster.
+          - Address this node's API server and etcd member advertise to the
+            rest of the cluster.
+      control_plane_load_balancer:
+        type: str
+        default: stacked
+        choices: [stacked, external]
+        description:
+          - How clients reach the API server at one address.
+          - stacked runs HAProxy and keepalived on the control-plane nodes and
+            floats control_plane_vip between them.
+          - external leaves load balancing to something outside the cluster,
+            whose address is control_plane_endpoint.
+      control_plane_vip:
+        type: str
+        default: ""
+        description:
+          - Virtual address the control-plane nodes float between themselves,
+            without a prefix length. Required when stacked.
+      control_plane_vip_prefix:
+        type: str
+        default: ""
+        description:
+          - Prefix length the VIP is added with. Empty takes it from the
+            interface the VIP lands on.
+      control_plane_vip_interface:
+        type: str
+        default: ""
+        description:
+          - Interface keepalived sends VRRP on and adds the VIP to. Empty picks
+            the interface holding control_plane_advertise_address.
+      control_plane_vip_router_id:
+        type: int
+        default: 51
+        description:
+          - VRRP router ID, 1-255. Must differ from every other VRRP group on
+            the same network.
+      control_plane_lb_port:
+        type: int
+        default: 8443
+        description:
+          - Port HAProxy serves the API server on. It cannot be 6443, which
+            kube-apiserver already has on these hosts.
+      control_plane_lb_timeouts:
+        type: dict
+        default:
+          connect: "5s"
+          client: "1h"
+          server: "1h"
+        description:
+          - HAProxy timeouts for the API server listener. Watches are
+            long-lived connections, so these are longer than a load balancer's
+            usual defaults.
       control_plane_endpoint:
         type: str
         default: ""
         description:
-          - Stable DNS name or VIP (host[:port]) for the API server.
-          - Can only be set at init; required to add control-plane nodes later.
+          - Address (host[:port]) of the load balancer in front of the API
+            servers. Required when external, ignored otherwise.
       control_plane_pod_network_cidr:
         type: str
         default: "10.244.0.0/16"
@@ -39,7 +100,7 @@ argument_specs:
         type: bool
         default: false
         description:
-          - Allow ordinary workloads on the control-plane node.
+          - Allow ordinary workloads on the control-plane nodes.
       control_plane_shutdown_grace_period:
         type: str
         default: "60s"
