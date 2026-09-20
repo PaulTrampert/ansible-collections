@@ -1,0 +1,104 @@
+---
+# Destructive: stops HAProxy on whichever control-plane node holds the API
+# server VIP, checks that the VIP moves and the API keeps answering, then
+# starts it again and checks the VIP comes back. Leaves the nodes as it found
+# them. Only applies to the topologies where the control-plane nodes load
+# balance for themselves.
+- name: Stop HAProxy on the node holding the VIP
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Check that this cluster load balances for itself
+      ansible.builtin.assert:
+        that:
+          - (control_plane_load_balancer | default('stacked')) == 'stacked'
+        fail_msg: >-
+          failover.yml tests the load balancer the control-plane nodes run for
+          themselves, and this cluster uses one outside it.
+        quiet: true
+
+    - name: Find the node holding the VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that exactly one node holds the VIP to begin with
+      ansible.builtin.assert:
+        that:
+          - k8s_vip_holders | length == 1
+        fail_msg: "Expected exactly one node to hold {{ k8s_api_vip }}, got {{ k8s_vip_holders }}"
+
+    - name: Note which node to fail
+      ansible.builtin.set_fact:
+        failover_from: "{{ k8s_vip_holders[0] }}"
+
+    - name: Stop HAProxy on {{ k8s_vip_holders[0] }}
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: stopped
+      when: inventory_hostname == failover_from
+
+- name: Check that the API server keeps answering on the VIP
+  hosts: control_plane[0]
+  become: false
+  gather_facts: false
+  tasks:
+    # Nothing listens on the VIP until another node takes it over, so this
+    # succeeding means the VIP moved to a node whose HAProxy is working.
+    - name: Wait for the VIP to serve again
+      ansible.builtin.wait_for:
+        host: "{{ k8s_api_vip }}"
+        port: "{{ control_plane_lb_port | default(8443) }}"
+        timeout: 60
+      delegate_to: localhost
+
+    # The vagrant user's kubeconfig points at the VIP, so this is a real client
+    # reaching the cluster the way anything else would.
+    - name: Read the nodes through the VIP
+      ansible.builtin.command: kubectl get nodes -o name
+      register: failover_nodes
+      until: failover_nodes.rc == 0
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: Check that the whole cluster is still visible
+      ansible.builtin.assert:
+        that:
+          - failover_nodes.stdout_lines | length == groups['k8s_cluster'] | length
+        fail_msg: >-
+          Saw {{ failover_nodes.stdout_lines | length }} nodes through
+          {{ k8s_api_vip }}, expected {{ groups['k8s_cluster'] | length }}
+
+- name: Give the VIP back
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Find the node holding the VIP now
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that the VIP moved to another node
+      ansible.builtin.assert:
+        that:
+          - k8s_vip_holders | length == 1
+          - k8s_vip_holders[0] != failover_from
+        fail_msg: >-
+          Expected {{ k8s_api_vip }} to move off {{ failover_from }},
+          held by {{ k8s_vip_holders }}
+
+    - name: Start HAProxy again on {{ failover_from }}
+      ansible.builtin.systemd_service:
+        name: haproxy
+        state: started
+      when: inventory_hostname == failover_from
+
+    # It is first in the group and so has the highest priority, which takes the
+    # VIP back once its health check passes again.
+    - name: Wait for the VIP to return to {{ failover_from }}
+      ansible.builtin.command: ip -json -4 address show dev {{ k8s_interface }}
+      register: failover_addresses
+      until: >-
+        k8s_api_vip in (failover_addresses.stdout | from_json
+                        | map(attribute='addr_info') | flatten | map(attribute='local'))
+      retries: 20
+      delay: 3
+      changed_when: false
+      when: inventory_hostname == failover_from

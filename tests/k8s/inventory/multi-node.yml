@@ -1,4 +1,5 @@
 ---
+# One control-plane node and two workers.
 k8s_cluster:
   children:
     control_plane:
@@ -8,15 +9,10 @@ k8s_cluster:
     workers:
       hosts:
         worker1:
-          ansible_host: 192.168.56.11
+          ansible_host: 192.168.56.21
         worker2:
-          ansible_host: 192.168.56.12
-  vars:
-    ansible_user: vagrant
-    ansible_ssh_private_key_file: .vagrant/machines/{{ inventory_hostname }}/virtualbox/private_key
-    # eth0 is the VirtualBox NAT interface, identical on every VM; the cluster
-    # has to use the private network on eth1.
-    node_ip: "{{ ansible_host }}"
-    control_plane_advertise_address: "{{ ansible_host }}"
-    control_plane_flannel_iface: eth1
-    control_plane_kubeconfig_users: [vagrant]
+          ansible_host: 192.168.56.22
+
+# Only the external-lb topology has a load balancer host.
+load_balancers:
+  hosts: {}

@@ -1,0 +1,17 @@
+---
+- name: Read the addresses on {{ k8s_interface }}
+  ansible.builtin.command: ip -json -4 address show dev {{ k8s_interface }}
+  register: k8s_addresses
+  changed_when: false
+
+- name: Note whether this host holds the VIP
+  ansible.builtin.set_fact:
+    k8s_holds_vip: >-
+      {{ k8s_api_vip in (k8s_addresses.stdout | from_json
+                         | map(attribute='addr_info') | flatten | map(attribute='local')) }}
+
+- name: Collect the hosts holding the VIP
+  ansible.builtin.set_fact:
+    k8s_vip_holders: >-
+      {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'k8s_holds_vip')))
+         | dict2items | selectattr('value') | map(attribute='key') | sort }}

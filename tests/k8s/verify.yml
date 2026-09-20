@@ -5,6 +5,24 @@
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   tasks:
+    - name: Read the address the cluster was built with
+      ansible.builtin.command: kubectl config view -o jsonpath={.clusters[0].cluster.server}
+      register: verify_server
+      changed_when: false
+
+    # Every kubectl below goes through this address, so the rest of the play
+    # exercises the load balancer as well as the cluster.
+    - name: Check the cluster uses the expected control plane endpoint
+      vars:
+        verify_endpoint: >-
+          {{ control_plane_endpoint
+             if (control_plane_load_balancer | default('stacked')) == 'external'
+             else control_plane_vip ~ ':' ~ (control_plane_lb_port | default(8443)) }}
+      ansible.builtin.assert:
+        that:
+          - verify_server.stdout == 'https://' ~ verify_endpoint
+        fail_msg: "API server at {{ verify_server.stdout }}, expected https://{{ verify_endpoint }}"
+
     - name: Read node Ready status
       ansible.builtin.command: >-
         kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
@@ -19,6 +37,34 @@
           - verify_nodes.stdout_lines | sort == verify_expected
         fail_msg: "Nodes {{ verify_nodes.stdout_lines }}, expected {{ verify_expected }}"
 
+    - name: Read the control-plane nodes
+      ansible.builtin.command: kubectl get nodes -l node-role.kubernetes.io/control-plane -o name
+      register: verify_control_plane_nodes
+      changed_when: false
+
+    - name: Check that every control-plane host joined as one
+      ansible.builtin.assert:
+        that:
+          - verify_control_plane_nodes.stdout_lines | length == groups['control_plane'] | length
+        fail_msg: >-
+          {{ verify_control_plane_nodes.stdout_lines | length }} control-plane nodes,
+          expected {{ groups['control_plane'] | length }}
+
+    # Each control-plane node runs a stacked etcd member. A node that joined
+    # without its member starting would leave the cluster a member short.
+    - name: Read the etcd members
+      ansible.builtin.command: kubectl get pods -n kube-system -l component=etcd -o name
+      register: verify_etcd
+      changed_when: false
+
+    - name: Check that every control-plane node runs an etcd member
+      ansible.builtin.assert:
+        that:
+          - verify_etcd.stdout_lines | length == groups['control_plane'] | length
+        fail_msg: >-
+          {{ verify_etcd.stdout_lines | length }} etcd members,
+          expected {{ groups['control_plane'] | length }}
+
     - name: Wait for system pods to be Ready
       ansible.builtin.command: kubectl wait --for=condition=Ready pods --all --namespace {{ item }} --timeout=300s
       loop: [kube-system, kube-flannel]
@@ -32,3 +78,29 @@
       register: verify_dns
       changed_when: false
       failed_when: verify_dns.rc != 0 or 'Address' not in verify_dns.stdout
+
+- name: Verify the floating API server address
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Check the stacked load balancer
+      when: (control_plane_load_balancer | default('stacked')) == 'stacked'
+      block:
+        - name: Find the node holding the VIP
+          ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+        - name: Check that exactly one node holds the VIP
+          ansible.builtin.assert:
+            that:
+              - k8s_vip_holders | length == 1
+            fail_msg: "Expected exactly one node to hold {{ k8s_api_vip }}, got {{ k8s_vip_holders }}"
+
+        # Every node runs HAProxy, whether or not it currently holds the VIP,
+        # so that the VIP serves the API wherever it lands.
+        - name: Check that this node's HAProxy serves the API
+          ansible.builtin.uri:
+            url: "https://{{ ansible_host }}:{{ control_plane_lb_port | default(8443) }}/healthz"
+            validate_certs: false
+            return_content: true
+          register: verify_healthz
+          failed_when: verify_healthz.content != 'ok'

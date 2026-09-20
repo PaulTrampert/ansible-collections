@@ -1,0 +1,23 @@
+---
+# Three control-plane nodes load balancing for themselves: HAProxy on each of
+# them, and keepalived floating k8s_api_vip between them. No workers, so the
+# control-plane nodes are schedulable and the cluster has somewhere to run
+# verify.yml's test pod.
+k8s_cluster:
+  children:
+    control_plane:
+      hosts:
+        cp1:
+          ansible_host: 192.168.56.10
+        cp2:
+          ansible_host: 192.168.56.11
+        cp3:
+          ansible_host: 192.168.56.12
+    workers:
+      hosts: {}
+  vars:
+    control_plane_schedulable: true
+
+# Only the external-lb topology has a load balancer host.
+load_balancers:
+  hosts: {}

@@ -1,0 +1,16 @@
+---
+ansible_user: vagrant
+ansible_ssh_private_key_file: .vagrant/machines/{{ inventory_hostname }}/virtualbox/private_key
+
+# eth0 is the VirtualBox NAT interface, identical on every VM; the cluster has
+# to use the private network on eth1.
+k8s_interface: eth1
+node_ip: "{{ ansible_host }}"
+control_plane_advertise_address: "{{ ansible_host }}"
+control_plane_flannel_iface: "{{ k8s_interface }}"
+control_plane_kubeconfig_users: [vagrant]
+
+# Address the API server answers on. The stacked topologies float it across the
+# control-plane nodes; external-lb ignores it and uses the HAProxy host.
+k8s_api_vip: 192.168.56.9
+control_plane_vip: "{{ k8s_api_vip }}"

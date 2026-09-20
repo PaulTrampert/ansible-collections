@@ -1,11 +1,21 @@
 ---
+# lb1 exists only in the external-lb topology. In the others the group is
+# empty and this play is skipped.
+- name: Configure the load balancer in front of the API servers
+  hosts: load_balancers
+  become: true
+  roles:
+    - ptrampert.general_services.haproxy
+
 - name: Prepare Kubernetes nodes
   hosts: k8s_cluster
   become: true
   roles:
     - ptrampert.k8s.node
 
-- name: Bootstrap the control plane
+# The whole group at once: each control-plane node needs the addresses of the
+# others, and nodes after the first join the cluster the first one creates.
+- name: Bootstrap and grow the control plane
   hosts: control_plane
   become: true
   roles:

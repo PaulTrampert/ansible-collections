@@ -2,35 +2,51 @@
 
 Vagrant VMs (VirtualBox, `bento/ubuntu-24.04`) for converging the collection's roles on real hosts.
 
-| Topology | VMs | Inventory |
-|---|---|---|
-| `single` (default) | `cp1` (control plane, schedulable) | `inventory/single-node.yml` (the default in `ansible.cfg`) |
-| `multi` | `cp1`, `worker1`, `worker2` | `inventory/multi-node.yml` |
+| `K8S_TOPOLOGY` | VMs | Inventory | RAM |
+|---|---|---|---|
+| `single` (default) | `cp1` (schedulable) | `inventory/single-node.yml` (the default in `ansible.cfg`) | 4G |
+| `multi` | `cp1`, `worker1`, `worker2` | `inventory/multi-node.yml` | 12G |
+| `stacked-ha` | `cp1`, `cp2`, `cp3` (schedulable) | `inventory/stacked-ha.yml` | 12G |
+| `external-lb` | `lb1`, `cp1`, `cp2`, `cp3`, `worker1` | `inventory/external-lb.yml` | 17G |
 
-The VMs use the private network `192.168.56.0/24` on `eth1`. `eth0` is VirtualBox NAT and has the same address on every VM, so the inventories point the kubelet, API server, and Flannel at `eth1`.
+Addresses on the private network `192.168.56.0/24`, which the VMs reach on `eth1`. `eth0` is VirtualBox NAT and has the same address on every VM, so `inventory/group_vars/all.yml` points the kubelet, API server, Flannel, and keepalived at `eth1`.
 
-## Single node
+| | |
+|---|---|
+| `.8` | `lb1` |
+| `.9` | the API server VIP, floated between the control-plane nodes — no VM has it |
+| `.10`–`.12` | `cp1`–`cp3` |
+| `.21`–`.22` | `worker1`–`worker2` |
+
+Set `K8S_TOPOLOGY` for **every** `vagrant` command, including `destroy` — without it Vagrant doesn't know the other VMs exist. Destroy one topology before bringing up another: they share VM names.
+
+## Running a topology
 
 ```sh
+export K8S_TOPOLOGY=stacked-ha
 vagrant up
-ansible-playbook playbook.yml    # converge
-ansible-playbook playbook.yml    # must report changed=0
-ansible-playbook verify.yml      # nodes Ready, system pods Ready, in-cluster DNS works
-vagrant ssh cp1 -c 'kubectl get nodes'
+ansible-playbook -i inventory/stacked-ha.yml playbook.yml   # converge
+ansible-playbook -i inventory/stacked-ha.yml playbook.yml   # must report changed=0
+ansible-playbook -i inventory/stacked-ha.yml verify.yml
 vagrant destroy -f
 ```
 
-## Multi node
-
-Set `K8S_TOPOLOGY=multi` for **every** `vagrant` command, including `destroy`. Without it, Vagrant doesn't know the worker VMs exist.
-
-```sh
-export K8S_TOPOLOGY=multi
-vagrant up
-ansible-playbook -i inventory/multi-node.yml playbook.yml
-ansible-playbook -i inventory/multi-node.yml playbook.yml
-ansible-playbook -i inventory/multi-node.yml verify.yml
-vagrant destroy -f
-```
+`single` needs no `-i`; it is the default in `ansible.cfg`.
 
 To get back to a clean baseline without rebuilding, take a snapshot right after `vagrant up` (`vagrant snapshot save fresh`) and restore it before each run (`vagrant snapshot restore fresh`).
+
+## What the playbooks check
+
+`verify.yml` checks that the cluster was built with the address the inventory asked for, that every inventory host is a Ready node, that every control-plane host joined as one and runs an etcd member, that the system pods are Ready, and that in-cluster DNS resolves. Everything goes through the load balancer, because the kubeconfig points at it. On the stacked topologies it also checks that exactly one node holds the VIP and that *every* control-plane node's HAProxy serves the API, not only the one currently holding it.
+
+`failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
+
+```sh
+ansible-playbook -i inventory/stacked-ha.yml failover.yml
+```
+
+## Adding a control-plane node
+
+The point of `stacked-ha` is that a node joins by appearing in the inventory. To see it, bring the topology up and converge with only `cp1` and `cp2` in `inventory/stacked-ha.yml`, then put `cp3` back and converge again — `cp1` and `cp2` report no changes and `cp3` joins.
+
+The same works from `single`: `cp1` alone gets a VIP, so the cluster it creates can grow. Bring up `stacked-ha` (which includes `cp1` at the same address), converge with `inventory/single-node.yml`, then converge again with `inventory/stacked-ha.yml`.

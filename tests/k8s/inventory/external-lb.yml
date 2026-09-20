@@ -1,0 +1,50 @@
+---
+# Three control-plane nodes behind a separate HAProxy host, the topology
+# control_plane_load_balancer: external expects. The cluster installs no load
+# balancer of its own; lb1 is built with ptrampert.general_services.haproxy,
+# the same way a load balancer outside the cluster would be.
+load_balancers:
+  hosts:
+    lb1:
+      ansible_host: 192.168.56.8
+  vars:
+    haproxy_listen:
+      - name: kube-apiserver
+        bind: "*:6443"
+        mode: tcp
+        balance: roundrobin
+        options:
+          - tcplog
+          - httpchk
+        extra:
+          - "http-check send meth GET uri /healthz"
+          - "http-check expect status 200"
+        timeouts:
+          connect: "5s"
+          client: "1h"
+          server: "1h"
+        server_options: "check check-ssl verify none inter 2s fall 3 rise 2"
+        servers: "{{ groups['control_plane'] | map('extract', hostvars, 'k8s_api_backend') | list }}"
+
+k8s_cluster:
+  children:
+    control_plane:
+      hosts:
+        cp1:
+          ansible_host: 192.168.56.10
+        cp2:
+          ansible_host: 192.168.56.11
+        cp3:
+          ansible_host: 192.168.56.12
+      vars:
+        # How lb1 reaches this node, collected into its server list above.
+        k8s_api_backend:
+          name: "{{ inventory_hostname }}"
+          address: "{{ ansible_host }}:6443"
+    workers:
+      hosts:
+        worker1:
+          ansible_host: 192.168.56.21
+  vars:
+    control_plane_load_balancer: external
+    control_plane_endpoint: "192.168.56.8:6443"
