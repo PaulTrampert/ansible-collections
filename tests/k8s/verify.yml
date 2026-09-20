@@ -113,18 +113,21 @@
   vars:
     verify_storage_class: "{{ local_path_provisioner_storage_class_name | default('local-path') }}"
   tasks:
-    # Fails outright if the role's class is missing.
-    - name: Read whether the role's class is the cluster default
-      ansible.builtin.command: >-
-        kubectl get storageclass {{ verify_storage_class }}
-        -o jsonpath={.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}
+    # Fails outright if the role's class is missing. Read as JSON rather than
+    # with a jsonpath, whose backslashes would not survive the way the command
+    # module splits its arguments.
+    - name: Read the role's storage class
+      ansible.builtin.command: kubectl get storageclass {{ verify_storage_class }} -o json
       register: verify_class
       changed_when: false
 
     - name: Check the role's class is the cluster default
+      vars:
+        verify_class_annotations: >-
+          {{ (verify_class.stdout | from_json).metadata.annotations | default({}, true) }}
       ansible.builtin.assert:
         that:
-          - verify_class.stdout == 'true'
+          - verify_class_annotations['storageclass.kubernetes.io/is-default-class'] | default('') == 'true'
         fail_msg: >-
           Storage class {{ verify_storage_class }} is not the cluster default
 
