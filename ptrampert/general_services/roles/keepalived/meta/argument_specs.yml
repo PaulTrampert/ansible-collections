@@ -76,7 +76,6 @@ argument_specs:
                 host may hold the address.
           authentication:
             type: dict
-            default: {}
             description:
               - VRRP authentication. Note that VRRP sends the password in
                 cleartext; it guards against a misconfigured neighbour, not an
