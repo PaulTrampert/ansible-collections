@@ -1,0 +1,144 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure keepalived.
+    description:
+      - Installs keepalived and writes its configuration from a list of VRRP
+        instances, so one or more virtual addresses float between hosts.
+      - Owns only the keepalived package, configuration file, and service. It
+        sets no sysctls and no firewall rules, so it is safe on a host that has
+        another job, such as a Kubernetes control-plane node.
+      - VRRP uses IP protocol 112, and must be allowed between the hosts taking
+        part. Where multicast is not carried, use unicast_src_ip and
+        unicast_peers.
+      - Supports Ubuntu only.
+    options:
+      keepalived_vrrp_instances:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - VRRP instances this host takes part in.
+        options:
+          name:
+            type: str
+            required: true
+            description:
+              - Name of the instance. Every host in the same instance must use
+                the same name.
+          interface:
+            type: str
+            required: true
+            description:
+              - Interface the instance sends and receives VRRP on, and where its
+                addresses are added.
+          virtual_router_id:
+            type: int
+            required: true
+            description:
+              - VRRP router ID, 1-255. The same on every host in the instance,
+                and different from any other instance on the same network.
+          virtual_ipaddresses:
+            type: list
+            elements: str
+            required: true
+            description:
+              - Addresses the elected host holds, e.g. C(192.0.2.10/24).
+          state:
+            type: str
+            default: BACKUP
+            choices: [MASTER, BACKUP]
+            description:
+              - Starting state. BACKUP everywhere lets the election decide,
+                which avoids a host claiming the address before it is ready.
+          priority:
+            type: int
+            default: 100
+            description:
+              - Election weight, 1-254. The highest priority wins.
+          advert_int:
+            type: int
+            default: 1
+            description:
+              - Seconds between VRRP advertisements.
+          nopreempt:
+            type: bool
+            default: false
+            description:
+              - Leave the address where it is when a higher-priority host comes
+                back, instead of taking it over again.
+          track_scripts:
+            type: list
+            elements: str
+            default: []
+            description:
+              - Names from keepalived_scripts whose health decides whether this
+                host may hold the address.
+          authentication:
+            type: dict
+            default: {}
+            description:
+              - VRRP authentication. Note that VRRP sends the password in
+                cleartext; it guards against a misconfigured neighbour, not an
+                attacker.
+            options:
+              type:
+                type: str
+                default: PASS
+                choices: [PASS, AH]
+                description:
+                  - Authentication type.
+              password:
+                type: str
+                required: true
+                description:
+                  - Shared password, up to 8 characters.
+          unicast_src_ip:
+            type: str
+            default: ""
+            description:
+              - Send VRRP from this address as unicast instead of multicast.
+          unicast_peers:
+            type: list
+            elements: str
+            default: []
+            description:
+              - Addresses of the other hosts in the instance, for unicast VRRP.
+          extra:
+            type: list
+            elements: str
+            default: []
+            description:
+              - Raw configuration lines added to this instance, for directives
+                this role has no option for (e.g. C(track_interface)).
+      keepalived_scripts:
+        type: dict
+        default: {}
+        description:
+          - Health-check scripts, keyed by the name track_scripts refers to.
+          - Each value takes command, and optionally interval, timeout, fall,
+            rise, and weight. With no weight, a failing script puts the
+            instances tracking it into the FAULT state, releasing their
+            addresses; a weight adjusts the priority instead.
+      keepalived_router_id:
+        type: str
+        default: "{{ ansible_facts['nodename'] }}"
+        description:
+          - Name this host reports in global_defs.
+      keepalived_script_user:
+        type: str
+        default: keepalived_script
+        description:
+          - Unprivileged user track scripts run as; the role creates it. Empty
+            runs them as root.
+      keepalived_script_security:
+        type: bool
+        default: true
+        description:
+          - Refuse to run track scripts that a non-root user could edit.
+      keepalived_global_extra:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Raw configuration lines added to global_defs.

@@ -1,0 +1,7 @@
+---
+# Reloading re-reads the configuration in place; keepalived re-runs the VRRP
+# election, so a host holding an address may briefly hand it over.
+- name: Reload keepalived
+  ansible.builtin.systemd_service:
+    name: keepalived
+    state: reloaded

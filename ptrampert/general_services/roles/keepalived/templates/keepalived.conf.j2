@@ -1,0 +1,72 @@
+# {{ ansible_managed }}
+global_defs {
+  router_id {{ keepalived_router_id }}
+{% if keepalived_script_user %}
+  script_user {{ keepalived_script_user }}
+{% endif %}
+{% if keepalived_script_security %}
+  enable_script_security
+{% endif %}
+{% for line in keepalived_global_extra %}
+  {{ line }}
+{% endfor %}
+}
+{% for name, script in keepalived_scripts.items() %}
+
+vrrp_script {{ name }} {
+  script "{{ script.command }}"
+  interval {{ script.interval | default(2) }}
+{% if script.timeout is defined %}
+  timeout {{ script.timeout }}
+{% endif %}
+  fall {{ script.fall | default(2) }}
+  rise {{ script.rise | default(2) }}
+{% if script.weight is defined %}
+  weight {{ script.weight }}
+{% endif %}
+}
+{% endfor %}
+{% for instance in keepalived_vrrp_instances %}
+
+vrrp_instance {{ instance.name }} {
+  state {{ instance.state | default('BACKUP', true) }}
+  interface {{ instance.interface }}
+  virtual_router_id {{ instance.virtual_router_id }}
+  priority {{ instance.priority | default(100, true) }}
+  advert_int {{ instance.advert_int | default(1, true) }}
+{% if instance.nopreempt | default(false, true) %}
+  nopreempt
+{% endif %}
+{% if instance.unicast_src_ip | default('', true) %}
+  unicast_src_ip {{ instance.unicast_src_ip }}
+{% endif %}
+{% if instance.unicast_peers | default([], true) %}
+  unicast_peer {
+{% for peer in instance.unicast_peers %}
+    {{ peer }}
+{% endfor %}
+  }
+{% endif %}
+{% if instance.authentication | default({}, true) %}
+  authentication {
+    auth_type {{ instance.authentication.type | default('PASS', true) }}
+    auth_pass {{ instance.authentication.password }}
+  }
+{% endif %}
+  virtual_ipaddress {
+{% for address in instance.virtual_ipaddresses %}
+    {{ address }}
+{% endfor %}
+  }
+{% if instance.track_scripts | default([], true) %}
+  track_script {
+{% for script in instance.track_scripts %}
+    {{ script }}
+{% endfor %}
+  }
+{% endif %}
+{% for line in instance.extra | default([], true) %}
+  {{ line }}
+{% endfor %}
+}
+{% endfor %}

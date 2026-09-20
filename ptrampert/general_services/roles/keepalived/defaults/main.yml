@@ -1,0 +1,24 @@
+---
+# VRRP instances this host takes part in, each holding one or more virtual
+# addresses. See meta/argument_specs.yml for the shape of an entry.
+keepalived_vrrp_instances: []
+
+# Health-check scripts, keyed by the name an instance's track_scripts refers to.
+# Each value takes command, and optionally interval, timeout, fall, rise, and
+# weight. A script that starts failing puts the instances tracking it into the
+# FAULT state, which hands their addresses to another node.
+keepalived_scripts: {}
+
+keepalived_router_id: "{{ ansible_facts['nodename'] }}"
+
+# Unprivileged user keepalived runs track scripts as; the role creates it. Empty
+# runs them as root, which keepalived only allows for scripts in a path no
+# ordinary user can write to.
+keepalived_script_user: keepalived_script
+
+# Refuse to run track scripts that a non-root user could edit.
+keepalived_script_security: true
+
+# Raw configuration lines appended to global_defs, for anything this role has no
+# variable for.
+keepalived_global_extra: []

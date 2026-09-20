@@ -1,0 +1,43 @@
+---
+- name: Check for a supported platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+    fail_msg: >-
+      ptrampert.general_services.keepalived supports Ubuntu only (found
+      {{ ansible_facts['distribution'] }}).
+    quiet: true
+
+- name: Install keepalived
+  ansible.builtin.apt:
+    name: keepalived
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the track script user
+  ansible.builtin.user:
+    name: "{{ keepalived_script_user }}"
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+  when: keepalived_script_user | length > 0
+
+- name: Write the keepalived configuration
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: "{{ keepalived_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    validate: keepalived -t -f %s
+  notify: Reload keepalived
+
+# The package ships no configuration, so keepalived cannot have started before
+# the task above wrote one.
+- name: Enable and start keepalived
+  ansible.builtin.systemd_service:
+    name: keepalived
+    enabled: true
+    state: started
