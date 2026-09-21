@@ -10,14 +10,6 @@ local_path_provisioner_namespace: local-path-storage
 # demand; putting a separate filesystem under it is the operator's business.
 local_path_provisioner_path: /opt/local-path-provisioner
 
-# Nodes that keep their volumes somewhere other than
-# local_path_provisioner_path, as node name to a list of directories. A node
-# mapped to an empty list refuses to provision volumes.
-#
-#   local_path_provisioner_node_paths:
-#     worker1: [/srv/local-path]
-local_path_provisioner_node_paths: {}
-
 local_path_provisioner_storage_class_name: local-path
 
 # Make this the class used by claims that name no class. Off by default, so a

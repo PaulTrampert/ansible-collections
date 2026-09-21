@@ -8,12 +8,6 @@ local_path_provisioner_chart_dir: >-
   {{ local_path_provisioner_src_dir }}/local-path-provisioner-{{
      local_path_provisioner_version | regex_replace('^v', '') }}/deploy/chart/local-path-provisioner
 
-# The chart takes the default path as an entry for the reserved node name
-# DEFAULT_PATH_FOR_NON_LISTED_NODES, and per-node overrides as further entries.
-local_path_provisioner_node_path_map: >-
-  {{ [{'node': 'DEFAULT_PATH_FOR_NON_LISTED_NODES', 'paths': [local_path_provisioner_path]}]
-     + (local_path_provisioner_node_paths | dict2items(key_name='node', value_name='paths')) }}
-
 local_path_provisioner_values:
   image:
     tag: "{{ local_path_provisioner_version }}"
@@ -26,4 +20,8 @@ local_path_provisioner_values:
     defaultClass: "{{ local_path_provisioner_storage_class_default | bool }}"
     reclaimPolicy: "{{ local_path_provisioner_reclaim_policy }}"
     volumeBindingMode: "{{ local_path_provisioner_volume_binding_mode }}"
-  nodePathMap: "{{ local_path_provisioner_node_path_map }}"
+  # The same directory on every node: the chart's reserved entry for nodes it
+  # has no specific path for.
+  nodePathMap:
+    - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+      paths: ["{{ local_path_provisioner_path }}"]

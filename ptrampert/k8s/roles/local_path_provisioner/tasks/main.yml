@@ -1,14 +1,11 @@
 ---
-- name: Check that every volume directory is an absolute path
-  vars:
-    local_path_provisioner_paths: >-
-      {{ local_path_provisioner_node_path_map | map(attribute='paths') | flatten }}
+- name: Check that the volume directory is an absolute path
   ansible.builtin.assert:
     that:
-      - local_path_provisioner_paths | reject('match', '/.+') | length == 0
+      - local_path_provisioner_path is match('/.+')
     fail_msg: >-
-      Volume directories must be absolute paths below the root directory, got
-      {{ local_path_provisioner_paths }}
+      local_path_provisioner_path must be an absolute path below the root
+      directory, got {{ local_path_provisioner_path }}
 
 - name: Create the chart directory
   ansible.builtin.file:

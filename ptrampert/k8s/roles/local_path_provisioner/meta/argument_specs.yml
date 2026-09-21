@@ -31,16 +31,10 @@ argument_specs:
         type: str
         default: /opt/local-path-provisioner
         description:
-          - Directory on each node that holds the volumes. The provisioner
-            creates it when it first provisions a volume there; mounting a
-            separate filesystem under it is not the role's business.
-      local_path_provisioner_node_paths:
-        type: dict
-        default: {}
-        description:
-          - Nodes that keep their volumes somewhere other than
-            local_path_provisioner_path, as node name to a list of absolute
-            paths. A node mapped to an empty list refuses to provision volumes.
+          - Directory that holds the volumes, the same on every node. The
+            provisioner creates it when it first provisions a volume there;
+            mounting a separate filesystem under it is not the role's
+            business.
       local_path_provisioner_storage_class_name:
         type: str
         default: local-path
