@@ -1,0 +1,27 @@
+---
+local_path_provisioner_release: local-path-provisioner
+
+# GitHub drops the leading v from a tag when it builds the source archive.
+local_path_provisioner_src_dir: /usr/local/lib/local-path-provisioner-{{ local_path_provisioner_version }}
+local_path_provisioner_archive: "{{ local_path_provisioner_version }}.tar.gz"
+local_path_provisioner_chart_dir: >-
+  {{ local_path_provisioner_src_dir }}/local-path-provisioner-{{
+     local_path_provisioner_version | regex_replace('^v', '') }}/deploy/chart/local-path-provisioner
+
+local_path_provisioner_values:
+  image:
+    tag: "{{ local_path_provisioner_version }}"
+  helperImage:
+    repository: "{{ local_path_provisioner_helper_image }}"
+    tag: "{{ local_path_provisioner_helper_image_tag }}"
+  storageClass:
+    create: true
+    name: "{{ local_path_provisioner_storage_class_name }}"
+    defaultClass: "{{ local_path_provisioner_storage_class_default | bool }}"
+    reclaimPolicy: "{{ local_path_provisioner_reclaim_policy }}"
+    volumeBindingMode: "{{ local_path_provisioner_volume_binding_mode }}"
+  # The same directory on every node: the chart's reserved entry for nodes it
+  # has no specific path for.
+  nodePathMap:
+    - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
+      paths: ["{{ local_path_provisioner_path }}"]

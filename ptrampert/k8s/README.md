@@ -9,6 +9,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.node` | every node | Kubernetes host prerequisites: swap off, kernel modules and sysctls, containerd (pinned to a release series), kubelet/kubeadm/kubectl (held at a fixed version), kubelet node IP. |
 | `ptrampert.k8s.control_plane` | `control_plane` | A stable API server address, `kubeadm init` on the first node and `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
 | `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
+| `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -72,6 +73,22 @@ Run the playbook against the whole `control_plane` group rather than limiting to
 
 With `control_plane_load_balancer: external`, add the new node to the external load balancer's backends as well — the role does not manage it.
 
+## Storage
+
+Without a storage provider every `PersistentVolumeClaim` stays `Pending`, so a cluster that runs anything with state needs one. `ptrampert.k8s.local_path_provisioner` installs Rancher's local-path-provisioner and a `StorageClass` that creates each volume as a directory under `local_path_provisioner_path` (by default `/opt/local-path-provisioner`, the same on every node) on the node where the claiming pod runs. The provisioner creates the directory itself; putting a separate filesystem under it is up to the operator.
+
+The volume lives on one node, so a pod that claims it can only ever run on that node. That suits a single-node cluster, and anything whose data is disposable or replicated by the workload itself. A pod that must be free to move between nodes needs storage the nodes share, which is a different provider.
+
+Claims are bound `WaitForFirstConsumer`: the volume is created once the scheduler has picked a node for the pod, rather than on a node chosen before anything knows where the pod will run.
+
+The class is not the cluster default unless asked, so a second provider can be added without the two disagreeing about which one a claim with no class should get:
+
+```yaml
+local_path_provisioner_storage_class_default: true
+```
+
+Deleting a claim deletes its data. Deleting a pod, Deployment or StatefulSet does not delete the claim, so ordinary redeployment keeps the data; set `local_path_provisioner_reclaim_policy: Retain` to keep the directory even when the claim goes away.
+
 ## Example playbook
 
 ```yaml
@@ -92,6 +109,14 @@ With `control_plane_load_balancer: external`, add the new node to the external l
   become: true
   roles:
     - ptrampert.k8s.worker
+
+# Configures the cluster, not the host, so it runs once rather than on every
+# control-plane node.
+- name: Install the storage provider
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - ptrampert.k8s.local_path_provisioner
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.

@@ -39,6 +39,8 @@ To get back to a clean baseline without rebuilding, take a snapshot right after 
 
 `verify.yml` checks that the cluster was built with the address the inventory asked for, that every inventory host is a Ready node, that every control-plane host joined as one and runs an etcd member, that the system pods are Ready, and that in-cluster DNS resolves. Everything goes through the load balancer, because the kubeconfig points at it. On the stacked topologies it also checks that exactly one node holds the VIP and that *every* control-plane node's HAProxy serves the API, not only the one currently holding it.
 
+It then checks storage: that the role's `StorageClass` is the cluster default, that a claim naming no class binds, and that a second pod reads back what the first one wrote to the volume. It removes what it created afterwards, so it can be run again.
+
 `failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
 
 ```sh
