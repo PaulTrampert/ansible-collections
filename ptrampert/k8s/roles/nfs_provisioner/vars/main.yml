@@ -1,0 +1,30 @@
+---
+nfs_provisioner_release: csi-driver-nfs
+nfs_provisioner_chart: csi-driver-nfs
+
+# Left out of the StorageClass when empty, so that the driver keeps its own
+# default rather than being handed a blank one.
+nfs_provisioner_optional_parameters:
+  subDir: "{{ nfs_provisioner_sub_dir }}"
+  mountPermissions: "{{ nfs_provisioner_mount_permissions }}"
+
+nfs_provisioner_parameters: >-
+  {{ {'server': nfs_provisioner_server,
+      'share': nfs_provisioner_share,
+      'onDelete': nfs_provisioner_on_delete}
+     | combine(nfs_provisioner_optional_parameters | dict2items
+               | rejectattr('value', 'eq', '') | items2dict) }}
+
+nfs_provisioner_storage_class_annotations: >-
+  {{ {'storageclass.kubernetes.io/is-default-class': 'true'}
+     if nfs_provisioner_storage_class_default | bool else {} }}
+
+nfs_provisioner_values:
+  storageClass:
+    create: true
+    name: "{{ nfs_provisioner_storage_class_name }}"
+    annotations: "{{ nfs_provisioner_storage_class_annotations }}"
+    parameters: "{{ nfs_provisioner_parameters }}"
+    reclaimPolicy: "{{ nfs_provisioner_reclaim_policy }}"
+    volumeBindingMode: "{{ nfs_provisioner_volume_binding_mode }}"
+    mountOptions: "{{ nfs_provisioner_mount_options }}"

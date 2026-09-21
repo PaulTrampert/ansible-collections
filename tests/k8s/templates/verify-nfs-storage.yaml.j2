@@ -1,0 +1,34 @@
+---
+# A claim against the NFS class and a pod on one worker that writes to it. The
+# reader that follows runs on another worker, which is the point of the class:
+# node-local storage could not serve the second pod at all.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: verify-nfs
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ verify_nfs_class }}
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-nfs-writer
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: {{ verify_nfs_writer_node }}
+  containers:
+    - name: writer
+      image: busybox:1.37
+      command: [sh, -c, "echo 'written by verify-nfs-writer' > /data/probe"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-nfs

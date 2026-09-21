@@ -21,3 +21,7 @@ k8s_cluster:
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}
+
+# Only the multi topology has an NFS server.
+nfs_servers:
+  hosts: {}
