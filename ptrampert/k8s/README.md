@@ -9,6 +9,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.node` | every node | Kubernetes host prerequisites: swap off, kernel modules and sysctls, containerd (pinned to a release series), kubelet/kubeadm/kubectl (held at a fixed version), kubelet node IP. |
 | `ptrampert.k8s.control_plane` | `control_plane` | A stable API server address, `kubeadm init` on the first node and `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
 | `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
+| `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
@@ -73,9 +74,29 @@ Run the playbook against the whole `control_plane` group rather than limiting to
 
 With `control_plane_load_balancer: external`, add the new node to the external load balancer's backends as well — the role does not manage it.
 
-## Storage over NFS
+## Storage
 
-Without a storage provider every `PersistentVolumeClaim` stays `Pending`, so a cluster that runs anything with state needs one. `ptrampert.k8s.nfs_provisioner` installs the kubernetes-csi NFS driver and a `StorageClass` that creates each volume as a directory under an NFS share. Every node mounts the same share, so a pod keeps its data when it is rescheduled onto another node.
+Without a storage provider every `PersistentVolumeClaim` stays `Pending`, so a cluster that runs anything with state needs one. The collection has two. Each creates its own `StorageClass`, they can be installed side by side, and a workload picks the one it needs by naming its class. At most one of them should be the cluster default, the class a claim naming none gets.
+
+### Node-local
+
+`ptrampert.k8s.local_path_provisioner` installs Rancher's local-path-provisioner and a `StorageClass` that creates each volume as a directory under `local_path_provisioner_path` (by default `/opt/local-path-provisioner`, the same on every node) on the node where the claiming pod runs. The provisioner creates the directory itself; putting a separate filesystem under it is up to the operator.
+
+The volume lives on one node, so a pod that claims it can only ever run on that node. That suits a single-node cluster, and anything whose data is disposable or replicated by the workload itself. A pod that must be free to move between nodes needs storage the nodes share: NFS, below.
+
+Claims are bound `WaitForFirstConsumer`: the volume is created once the scheduler has picked a node for the pod, rather than on a node chosen before anything knows where the pod will run.
+
+The class is not the cluster default unless asked:
+
+```yaml
+local_path_provisioner_storage_class_default: true
+```
+
+Deleting a claim deletes its data. Deleting a pod, Deployment or StatefulSet does not delete the claim, so ordinary redeployment keeps the data; set `local_path_provisioner_reclaim_policy: Retain` to keep the directory even when the claim goes away.
+
+### Shared over NFS
+
+`ptrampert.k8s.nfs_provisioner` installs the kubernetes-csi NFS driver and a `StorageClass` that creates each volume as a directory under an NFS share. Every node mounts the same share, so a pod keeps its data when it is rescheduled onto another node.
 
 The export has to exist already, and both settings are required:
 
@@ -88,7 +109,7 @@ The role builds no NFS server. Nothing about it assumes one kind of server eithe
 
 The nodes need no NFS packages of their own. The driver's node plugin carries its own NFS client and mounts the share from inside its container.
 
-The class is not the cluster default unless asked, so a cluster that already has a storage provider does not silently change which one a claim with no class gets:
+Like the node-local class, it is not the cluster default unless asked:
 
 ```yaml
 nfs_provisioner_storage_class_default: true
@@ -120,11 +141,13 @@ Mount options default to `nfsvers=4.1` and are configurable, as is a `nfs_provis
     - ptrampert.k8s.worker
 
 # Configures the cluster, not the host, so it runs once rather than on every
-# control-plane node.
-- name: Install the storage provider
+# control-plane node. Install either provider, or both.
+- name: Install the storage providers
   hosts: control_plane[0]
   become: true
   roles:
+    - ptrampert.k8s.local_path_provisioner
+    # Needs nfs_provisioner_server and nfs_provisioner_share.
     - ptrampert.k8s.nfs_provisioner
 ```
 

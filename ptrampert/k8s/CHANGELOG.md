@@ -11,6 +11,10 @@
   on the control-plane nodes themselves and floats `control_plane_vip` between them; set
   `control_plane_load_balancer: external` with `control_plane_endpoint` to use a load
   balancer outside the cluster instead.
+- Add a `local_path_provisioner` role: a `StorageClass` backed by a directory on each node,
+  provisioned by Rancher's local-path-provisioner. The directory, the class name, the reclaim
+  policy and whether the class is the cluster default are all configurable; the class is not
+  the default unless asked.
 - Add an `nfs_provisioner` role: a `StorageClass` backed by an NFS export that every node
   mounts, so a rescheduled pod keeps its data, provisioned by the kubernetes-csi NFS driver.
   The export is an input; the role does not build an NFS server, and the nodes need no NFS

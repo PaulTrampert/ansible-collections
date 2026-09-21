@@ -1,0 +1,57 @@
+---
+# A claim with no storageClassName, so the cluster's default class provisions
+# it, and two pods in sequence: one writes a file, the other reads it back
+# after the first has exited. The second pod only starts once the first has
+# succeeded, so both may share a volume that only one node can mount.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: verify-storage
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-storage-writer
+spec:
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: busybox:1.37
+      command: [sh, -c, "echo 'written by verify-storage-writer' > /data/probe"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-storage
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-storage-reader
+spec:
+  restartPolicy: Never
+  initContainers:
+    - name: wait-for-writer
+      image: busybox:1.37
+      command: [sh, -c, "until [ -f /data/probe ]; do sleep 1; done"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  containers:
+    - name: reader
+      image: busybox:1.37
+      command: [cat, /data/probe]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: verify-storage

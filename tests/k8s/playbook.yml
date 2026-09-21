@@ -28,7 +28,7 @@
     - ptrampert.k8s.worker
 
 # nfs1 exists only in the multi topology. In the others the group is empty and
-# this play is skipped, as is the provisioner below.
+# this play is skipped, as is the NFS provisioner below.
 - name: Export a share for the storage provider
   hosts: nfs_servers
   become: true
@@ -71,9 +71,11 @@
 
 # Cluster-wide configuration, applied once from a control-plane node rather
 # than on every host in the group.
-- name: Install the NFS storage provider
+- name: Install the storage providers
   hosts: control_plane[0]
   become: true
+  roles:
+    - ptrampert.k8s.local_path_provisioner
   tasks:
     - name: Deploy the NFS CSI driver
       ansible.builtin.include_role:

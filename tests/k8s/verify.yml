@@ -105,6 +105,81 @@
           register: verify_healthz
           failed_when: verify_healthz.content != 'ok'
 
+- name: Verify the local-path storage provider
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_storage_class: "{{ local_path_provisioner_storage_class_name | default('local-path') }}"
+  tasks:
+    # Fails outright if the role's class is missing. Read as JSON rather than
+    # with a jsonpath, whose backslashes would not survive the way the command
+    # module splits its arguments.
+    - name: Read the role's storage class
+      ansible.builtin.command: kubectl get storageclass {{ verify_storage_class }} -o json
+      register: verify_class
+      changed_when: false
+
+    - name: Check the role's class is the cluster default
+      vars:
+        verify_class_annotations: >-
+          {{ (verify_class.stdout | from_json).metadata.annotations | default({}, true) }}
+      ansible.builtin.assert:
+        that:
+          - verify_class_annotations['storageclass.kubernetes.io/is-default-class'] | default('') == 'true'
+        fail_msg: >-
+          Storage class {{ verify_storage_class }} is not the cluster default
+
+    # A claim that names no class, so it also proves the default annotation is
+    # what the cluster acts on. Binding waits for the writer pod to be
+    # scheduled, which is what WaitForFirstConsumer means.
+    - name: Provision a volume and read back what a pod wrote to it
+      block:
+        - name: Create a claim and a pod that writes to it
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/verify-storage.yaml.j2') }}"
+          changed_when: true
+
+        - name: Wait for the writing pod to finish
+          ansible.builtin.command: >-
+            kubectl wait --for=jsonpath={.status.phase}=Succeeded pod/verify-storage-writer --timeout=300s
+          changed_when: false
+
+        - name: Read the claim's status
+          ansible.builtin.command: kubectl get pvc verify-storage -o jsonpath={.status.phase}
+          register: verify_claim
+          changed_when: false
+
+        - name: Check the claim is bound
+          ansible.builtin.assert:
+            that:
+              - verify_claim.stdout == 'Bound'
+            fail_msg: "Claim verify-storage is {{ verify_claim.stdout }}, expected Bound"
+
+        - name: Wait for the reading pod to finish
+          ansible.builtin.command: >-
+            kubectl wait --for=jsonpath={.status.phase}=Succeeded pod/verify-storage-reader --timeout=300s
+          changed_when: false
+
+        - name: Read what the second pod saw
+          ansible.builtin.command: kubectl logs pod/verify-storage-reader
+          register: verify_data
+          changed_when: false
+
+        - name: Check the second pod read the first one's data
+          ansible.builtin.assert:
+            that:
+              - verify_data.stdout == 'written by verify-storage-writer'
+            fail_msg: "Second pod read {{ verify_data.stdout | to_json }}"
+      always:
+        - name: Remove the verification resources
+          ansible.builtin.command: >-
+            kubectl delete --ignore-not-found --wait=false
+            pod/verify-storage-writer pod/verify-storage-reader pvc/verify-storage
+          changed_when: true
+
 - name: Verify the NFS storage provider
   hosts: control_plane[0]
   become: true

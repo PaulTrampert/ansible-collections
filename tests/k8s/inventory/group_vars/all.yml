@@ -14,3 +14,7 @@ control_plane_kubeconfig_users: [vagrant]
 # control-plane nodes; external-lb ignores it and uses the HAProxy host.
 k8s_api_vip: 192.168.56.9
 control_plane_vip: "{{ k8s_api_vip }}"
+
+# The only storage provider in the test cluster, so claims that name no class
+# should get it. Exercises the role's default-class toggle.
+local_path_provisioner_storage_class_default: true
