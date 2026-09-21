@@ -25,7 +25,7 @@ tests/
 - **ptrampert.k8s** — roles for setting up and maintaining a Kubernetes cluster (node preparation, cluster bootstrap, upgrades, and ongoing maintenance).
 - **ptrampert.general_services** — roles for services that aren't tied to any one application (HAProxy load balancing, keepalived VIPs).
 
-When adding a new collection, scaffold it with `ansible-galaxy collection init ptrampert.<name>` from the repo root and add it to the list above.
+When adding a new collection, scaffold it with `ansible-galaxy collection init ptrampert.<name>` from the repo root, and add it to the list above and to the top-level `README.md`.
 
 ## Working on roles
 
@@ -81,6 +81,10 @@ vagrant destroy -f                        # tear down
 `tests/k8s/` supports single-node and multi-node topologies; see `tests/k8s/README.md`.
 
 Use `vagrant snapshot save`/`restore` to get back to a clean baseline quickly instead of rebuilding VMs between runs. A change to a role isn't done until it converges on fresh VMs and a second run reports no changes.
+
+## Documentation
+
+The top-level `README.md` is written for people using the collections: what each one contains and how to install them from git. Keep it up to date in every pull request: a PR that adds, renames or removes a collection or a role, changes a collection's dependencies, or changes how the collections are installed updates `README.md` in the same PR. The same applies to each collection's own `README.md` and `CHANGELOG.md`.
 
 ## Versioning
 
