@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ rclone_restic_server_name }}
+  namespace: {{ rclone_restic_server_namespace }}
+  labels:
+    app.kubernetes.io/name: {{ rclone_restic_server_name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ rclone_restic_server_name }}
+  ports:
+    - name: http
+      port: {{ rclone_restic_server_port }}
+      targetPort: http

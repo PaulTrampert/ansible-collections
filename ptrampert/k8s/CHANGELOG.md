@@ -19,3 +19,7 @@
   mounts, so a rescheduled pod keeps its data, provisioned by the kubernetes-csi NFS driver.
   The export is an input; the role does not build an NFS server, and the nodes need no NFS
   packages of their own.
+- Add an `rclone_restic_server` role: `rclone serve restic` in the cluster behind a ClusterIP
+  Service, storing restic repositories on any rclone remote. Users are required and each one
+  reaches only its own repositories; append-only is an option. The rclone config seeds a copy
+  on a volume, so OAuth tokens rclone refreshes survive restarts.

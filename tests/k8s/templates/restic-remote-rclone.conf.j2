@@ -1,0 +1,7 @@
+# The remote the server serves, for restic running on the host without it.
+{% for remote, settings in rclone_restic_server_config.items() %}
+[{{ remote }}]
+{% for key, value in settings.items() %}
+{{ key }} = {{ value }}
+{% endfor %}
+{% endfor %}

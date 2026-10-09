@@ -1,0 +1,91 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ rclone_restic_server_name }}
+  namespace: {{ rclone_restic_server_namespace }}
+  labels:
+    app.kubernetes.io/name: {{ rclone_restic_server_name }}
+spec:
+  replicas: 1
+  # The config volume can be mounted by one node at a time, so the old pod has
+  # to let go of it before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ rclone_restic_server_name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ rclone_restic_server_name }}
+      annotations:
+        checksum/settings: {{ rclone_restic_server_checksum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ rclone_restic_server_uid }}
+        runAsGroup: {{ rclone_restic_server_uid }}
+        fsGroup: {{ rclone_restic_server_uid }}
+        seccompProfile:
+          type: RuntimeDefault
+      # rclone rewrites its config when it refreshes an OAuth token, so it runs
+      # against a copy on the volume rather than the read-only Secret. The copy
+      # is made once; after that the seed is only a fallback.
+      initContainers:
+        - name: seed-config
+          image: {{ rclone_restic_server_image }}
+          command:
+            - sh
+            - -c
+            - >-
+              [ -f /config/rclone.conf ] ||
+              { cp /seed/rclone.conf /config/rclone.conf.new &&
+                chmod 600 /config/rclone.conf.new &&
+                mv /config/rclone.conf.new /config/rclone.conf; }
+          securityContext: &container-security-context
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+      containers:
+        - name: rclone
+          image: {{ rclone_restic_server_image }}
+          args: {{ rclone_restic_server_args | to_json }}
+          ports:
+            - name: http
+              containerPort: {{ rclone_restic_server_port }}
+          # Every HTTP request needs credentials, so readiness is the port
+          # accepting connections.
+          readinessProbe:
+            tcpSocket:
+              port: http
+          securityContext: *container-security-context
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: htpasswd
+              mountPath: /auth
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ rclone_restic_server_name }}-config
+        - name: seed
+          secret:
+            secretName: {{ rclone_restic_server_name }}-seed
+            defaultMode: 0440
+        - name: htpasswd
+          secret:
+            secretName: {{ rclone_restic_server_name }}-htpasswd
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {}

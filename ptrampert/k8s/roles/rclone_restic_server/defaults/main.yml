@@ -1,0 +1,36 @@
+---
+# rclone release, as a tag of the upstream rclone/rclone image. Upgrade by
+# bumping it.
+rclone_restic_server_version: "1.75.2"
+
+# Namespace the server runs in. Created if it does not exist.
+rclone_restic_server_namespace: rclone-restic-server
+
+# The rclone config, as a mapping of remote name to that remote's settings,
+# rendered as rclone.conf. Values are written as they are given, so secrets
+# rclone keeps obscured (an SFTP pass, for example) must be given obscured, as
+# `rclone obscure` prints them. Only seeds the config the server runs with: see
+# the README.
+rclone_restic_server_config: {}
+
+# What the server serves, as remote:path. Required. Every client's
+# repositories live under it, in a directory named after the client's user.
+rclone_restic_server_remote: ""
+
+# Users allowed to reach the server, each a mapping with `name` and
+# `password_hash` (a bcrypt hash). At least one is required: without users the
+# server would allow anyone in. Each user reaches only the repositories under
+# /<name>/.
+rclone_restic_server_users: []
+
+# Refuse to delete or overwrite anything in a repository. Protects backups from
+# a compromised client, but also stops `restic forget --prune`, so pruning has
+# to happen somewhere that writes the remote directly.
+rclone_restic_server_append_only: false
+
+# Storage class for the small volume that holds the server's copy of the
+# config. Empty uses the cluster's default class.
+rclone_restic_server_storage_class: ""
+
+# Admin kubeconfig used to talk to the cluster.
+rclone_restic_server_kubeconfig: /etc/kubernetes/admin.conf

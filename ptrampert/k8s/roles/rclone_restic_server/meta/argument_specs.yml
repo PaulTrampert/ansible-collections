@@ -1,0 +1,95 @@
+---
+argument_specs:
+  main:
+    short_description: Serve restic repositories on any rclone remote from inside the cluster.
+    description:
+      - Runs C(rclone serve restic) in the cluster behind a ClusterIP Service,
+        so that restic clients such as k8up reach it through restic's C(rest)
+        backend. The repositories are stored on any rclone remote, such as a cloud
+        drive, SFTP, an object store.
+      - The role is a storage endpoint only. What gets backed up, when, and
+        how long it is kept belong to the clients.
+      - Users are required, and each one reaches only the repositories under
+        C(/<name>/), so every client should get its own.
+      - The rclone config is seeded, not managed. It is stored in a Secret and
+        copied to a small volume the first time the server starts; after that
+        the server runs against the copy, so tokens rclone refreshes survive
+        restarts, and changing the seed does not touch an existing copy.
+      - Plain HTTP, reachable only from inside the cluster. restic encrypts
+        the repositories itself, but credentials cross the cluster network in
+        clear.
+      - Runs on a single control-plane host, which needs kubectl access to the
+        cluster, as ptrampert.k8s.control_plane leaves it. Installs the Python
+        Kubernetes client on that host.
+    options:
+      rclone_restic_server_version:
+        type: str
+        default: "1.75.2"
+        description:
+          - Tag of the upstream C(rclone/rclone) image to run.
+      rclone_restic_server_namespace:
+        type: str
+        default: rclone-restic-server
+        description:
+          - Namespace the server runs in. Created if it does not exist. The
+            Service is C(rclone-restic-server) in this namespace, on port 8080.
+      rclone_restic_server_config:
+        type: dict
+        default: {}
+        description:
+          - The rclone config, as a mapping of remote name to a mapping of that
+            remote's settings, rendered as C(rclone.conf). A C(crypt) remote
+            wrapping another one needs nothing special.
+          - Values are written as given, so settings rclone keeps obscured,
+            such as an SFTP C(pass), must be given as C(rclone obscure) prints
+            them. A mapping value, such as an OAuth C(token), is written as
+            JSON.
+          - Only seeds the server's own copy. See the collection README for
+            re-authorising a remote.
+      rclone_restic_server_remote:
+        type: str
+        default: ""
+        description:
+          - Required. What to serve, as C(remote:path). Each user's repositories live
+            under it, in a directory named after the user.
+      rclone_restic_server_users:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Users allowed to reach the server. At least one is required,
+            because without users C(rclone serve restic) lets anyone in.
+          - Each user reaches only the repositories under C(/<name>/).
+        options:
+          name:
+            type: str
+            required: true
+            description:
+              - User name. Also the top-level directory of the user's
+                repositories.
+          password_hash:
+            type: str
+            required: true
+            description:
+              - bcrypt hash of the user's password, as C(htpasswd -nB <name>)
+                prints after the colon. A hash rather than the password keeps
+                the role's output the same between runs.
+      rclone_restic_server_append_only:
+        type: bool
+        default: false
+        description:
+          - Refuse to delete or overwrite anything in a repository. Protects
+            the backups from a compromised client, but also makes
+            C(restic forget --prune) fail, so pruning has to run somewhere that
+            writes the remote directly.
+      rclone_restic_server_storage_class:
+        type: str
+        default: ""
+        description:
+          - Storage class of the small volume holding the server's copy of the
+            config. Empty uses the cluster's default class.
+      rclone_restic_server_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig the role uses to talk to the cluster.

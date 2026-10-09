@@ -81,3 +81,35 @@
       ansible.builtin.include_role:
         name: ptrampert.k8s.nfs_provisioner
       when: groups['nfs_servers'] | length > 0
+
+# A storage target for the restic server: SFTP on a host the cluster can reach.
+# Stands outside the collection like the NFS export above; the role consumes a
+# remote rather than providing one.
+- name: Provide an SFTP target for the restic server
+  hosts: control_plane[0]
+  become: true
+  tasks:
+    # A fixed salt keeps the hash, and so the task, the same between runs.
+    - name: Create the user the server signs in as
+      ansible.builtin.user:
+        name: "{{ restic_store_user }}"
+        home: "{{ restic_store_home }}"
+        shell: /bin/sh
+        password: "{{ restic_store_password | password_hash('sha512', 'resticstore') }}"
+
+- name: Run the restic REST servers
+  hosts: control_plane[0]
+  become: true
+  tasks:
+    - name: Serve the SFTP target
+      ansible.builtin.include_role:
+        name: ptrampert.k8s.rclone_restic_server
+
+    # The same repositories again, for the append-only checks. Also another
+    # process writing the remote behind the first server's back.
+    - name: Serve the same target append-only
+      ansible.builtin.include_role:
+        name: ptrampert.k8s.rclone_restic_server
+      vars:
+        rclone_restic_server_namespace: "{{ restic_append_only_namespace }}"
+        rclone_restic_server_append_only: true

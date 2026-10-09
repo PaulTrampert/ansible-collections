@@ -5,7 +5,7 @@ general-purpose services around it.
 
 | Collection | What it holds |
 |---|---|
-| [`ptrampert.k8s`](ptrampert/k8s/README.md) | Roles for a kubeadm-based cluster: node preparation (`node`), bootstrapping and growing the control plane (`control_plane`), joining workers (`worker`), and storage providers (`local_path_provisioner`, `nfs_provisioner`). |
+| [`ptrampert.k8s`](ptrampert/k8s/README.md) | Roles for a kubeadm-based cluster: node preparation (`node`), bootstrapping and growing the control plane (`control_plane`), joining workers (`worker`), storage providers (`local_path_provisioner`, `nfs_provisioner`), and backup storage for restic (`rclone_restic_server`). |
 | [`ptrampert.general_services`](ptrampert/general_services/README.md) | Roles for services that aren't tied to any one application: `haproxy` and `keepalived`. |
 
 Each collection's README covers how its roles fit together, and each role documents its inputs in

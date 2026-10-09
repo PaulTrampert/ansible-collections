@@ -1,0 +1,32 @@
+---
+rclone_restic_server_name: rclone-restic-server
+rclone_restic_server_image: docker.io/rclone/rclone:{{ rclone_restic_server_version }}
+rclone_restic_server_port: 8080
+
+# The image runs as root unless told otherwise.
+rclone_restic_server_uid: 65532
+
+# Holds one small text file, but some provisioners refuse tiny claims.
+rclone_restic_server_config_volume_size: 64Mi
+
+# --cache-objects is on by default and keeps serving objects it has seen after
+# something else deletes them from the remote, such as a prune that runs
+# directly against it. Off, every request asks the remote.
+rclone_restic_server_args: >-
+  {{ ['serve', 'restic', rclone_restic_server_remote,
+      '--addr', ':' ~ rclone_restic_server_port,
+      '--config', '/config/rclone.conf',
+      '--cache-dir', '/tmp/rclone',
+      '--htpasswd', '/auth/htpasswd',
+      '--private-repos',
+      '--cache-objects=false']
+     + (['--append-only'] if rclone_restic_server_append_only | bool else []) }}
+
+rclone_restic_server_htpasswd: "{{ lookup('ansible.builtin.template', 'htpasswd.j2') }}"
+rclone_restic_server_rclone_conf: "{{ lookup('ansible.builtin.template', 'rclone.conf.j2') }}"
+
+# Rolls the pod when the server's flags or its users change. The seed config is
+# left out on purpose: changing it does not touch the copy the server runs
+# with.
+rclone_restic_server_checksum: >-
+  {{ (rclone_restic_server_args | to_json ~ rclone_restic_server_htpasswd) | hash('sha256') }}
