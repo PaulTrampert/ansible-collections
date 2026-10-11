@@ -18,6 +18,10 @@ ptrampert/
 tests/
 ├── k8s/                  # Vagrant test harness for ptrampert.k8s (see Testing)
 └── general_services/     # Vagrant test harness for ptrampert.general_services
+.github/
+├── renovate.json5        # Renovate configuration (see Dependency updates)
+├── renovate/             # Renovate's global config and post-upgrade script
+└── workflows/renovate.yml
 ```
 
 ### Collections
@@ -25,7 +29,7 @@ tests/
 - **ptrampert.k8s** — roles for setting up and maintaining a Kubernetes cluster (node preparation, cluster bootstrap, upgrades, and ongoing maintenance).
 - **ptrampert.general_services** — roles for services that aren't tied to any one application (HAProxy load balancing, keepalived VIPs).
 
-When adding a new collection, scaffold it with `ansible-galaxy collection init ptrampert.<name>` from the repo root, and add it to the list above and to the top-level `README.md`.
+When adding a new collection, scaffold it with `ansible-galaxy collection init ptrampert.<name>` from the repo root, and add it to the list above and to the top-level `README.md`. Also give it a `packageRules` entry in `.github/renovate.json5` like the existing collections have, so its updates are grouped and bump its version.
 
 ## Working on roles
 
@@ -39,6 +43,7 @@ When adding a new collection, scaffold it with `ansible-galaxy collection init p
 - Tasks must be idempotent: a second run against an unchanged host should report no changes. Use `changed_when`/`creates` on `command`/`shell` tasks, and prefer purpose-built modules over shelling out.
 - Restart or reload services through handlers rather than inline tasks.
 - Name every task and play.
+- Annotate every pinned upstream version with a `# renovate:` comment, in `defaults/main.yml` and above its `default:` in `meta/argument_specs.yml` (see Dependency updates).
 - If a role depends on another collection (e.g. `kubernetes.core`, `ansible.posix`), add it to `dependencies` in `galaxy.yml`.
 
 ## Tooling
@@ -89,6 +94,21 @@ The top-level `README.md` is written for people using the collections: what each
 ## Versioning
 
 Each collection is versioned independently with semver via `version` in its `galaxy.yml`. Bump it when making changes intended for release.
+
+## Dependency updates
+
+Renovate keeps the pinned upstream versions current. It runs from `.github/workflows/renovate.yml` every Monday, or on demand from the Actions tab, and opens at most one PR per collection covering every pin in it with a newer release. Each PR bumps that collection's PATCH version and adds a `CHANGELOG.md` section. Nothing is merged automatically: test a Renovate PR on the Vagrant harness like any other change, and raise the bump to MINOR or MAJOR if consuming the update needs changes downstream.
+
+Renovate finds a pin by the annotation on the line above it, so every new version pin needs one, both in `defaults/main.yml` and above its `default:` in `meta/argument_specs.yml`:
+
+```yaml
+# renovate: datasource=docker depName=rclone/rclone
+rclone_restic_server_version: "1.75.2"
+```
+
+The fields, in this order, are `datasource` (where releases are looked up: `docker`, `github-releases`, `github-tags`, `helm`, `pypi`, ...), `depName` (the image, repository, chart or package), then optionally `registryUrl` (e.g. a Helm chart repository) and `versioning` (when the datasource's default scheme doesn't fit). The value must be on the next line, as `<name>: <version>`, quoted or not.
+
+Leave the annotation off versions that are changed by a procedure rather than a bump, like `node_kubernetes_version` and `node_containerd_series`, and say why in the comment above them.
 
 ## Pull requests
 
