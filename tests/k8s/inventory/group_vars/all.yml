@@ -37,9 +37,8 @@ rclone_restic_server_config:
     # rclone obscure restic-store-test-password
     pass: 2UZj_VN4J-0TTs-2O1fEyud9nTQf9RQizFKjPOnNM9rWFItr6vV4taV0
 rclone_restic_server_remote: store:repos
-# htpasswd -nbB <name> <name>-test-password
 rclone_restic_server_users:
   - name: alice
-    password_hash: $2y$10$eHUcORHMv7mOlRm5Q5MYvOmXpc54FOxkGCDoAm7FBx7EFBjHpPXxu
+    password: alice-test-password
   - name: bob
-    password_hash: $2y$10$996GRGEOrZcUWOUU/0uT0u0vzQywKzPMgWqxDNSHUj6gvkqV6NjKW
+    password: bob-test-password

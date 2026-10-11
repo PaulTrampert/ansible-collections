@@ -68,13 +68,17 @@ argument_specs:
             description:
               - User name. Also the top-level directory of the user's
                 repositories.
-          password_hash:
+          password:
             type: str
             required: true
+            no_log: true
             description:
-              - bcrypt hash of the user's password, as C(htpasswd -nB <name>)
-                prints after the colon. A hash rather than the password keeps
-                the role's output the same between runs.
+              - The user's password. The role stores it as a bcrypt hash,
+                salted from the namespace and the user name so that an
+                unchanged password gives the same hash on every run.
+              - Hashing runs on the controller and needs bcrypt support there,
+                from C(passlib) or from a C(crypt) in libc that supports it,
+                as libxcrypt on most Linux distributions does.
       rclone_restic_server_append_only:
         type: bool
         default: false

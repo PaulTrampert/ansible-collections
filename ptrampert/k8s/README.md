@@ -136,7 +136,7 @@ rclone_restic_server_config:
 rclone_restic_server_remote: offsite:restic
 rclone_restic_server_users:
   - name: app1
-    password_hash: "{{ vault_restic_app1_hash }}"
+    password: "{{ vault_restic_app1_password }}"
 ```
 
 `rclone_restic_server_config` is the rclone config itself, a mapping of remote name to its settings, rendered as `rclone.conf`. It is passed through as given, so a `crypt` remote wrapping another one needs nothing from the role (restic encrypts its repositories anyway). Settings rclone keeps obscured must be given obscured.
@@ -153,11 +153,7 @@ rest:http://<user>:<password>@rclone-restic-server.<namespace>.svc:8080/<user>/<
 
 Users are required, since without them `rclone serve restic` lets anyone in. Each user reaches only the repositories under `/<user>/` (`--private-repos`), so give every client its own user: then a client can neither read nor delete another one's backups. That is the access control. The cluster's CNI, Flannel, does not enforce `NetworkPolicy`, so the role creates none.
 
-Users are given as a bcrypt hash rather than a password. That keeps what the role writes the same between runs, and the controller needs no hashing library. Generate one with `htpasswd` from `apache2-utils` and take what follows the colon:
-
-```sh
-htpasswd -nB app1
-```
+The role stores each password as a bcrypt hash. The salt comes from the namespace and the user name rather than at random, so an unchanged password hashes the same on every run and the pod is only restarted when a password changes. Hashing happens on the controller, which needs bcrypt support: `passlib`, or a libc `crypt` that supports it, as libxcrypt on most Linux distributions does.
 
 ### The config is seeded, not managed
 

@@ -18,9 +18,8 @@ rclone_restic_server_config: {}
 rclone_restic_server_remote: ""
 
 # Users allowed to reach the server, each a mapping with `name` and
-# `password_hash` (a bcrypt hash). At least one is required: without users the
-# server would allow anyone in. Each user reaches only the repositories under
-# /<name>/.
+# `password`. At least one is required: without users the server would allow
+# anyone in. Each user reaches only the repositories under /<name>/.
 rclone_restic_server_users: []
 
 # Refuse to delete or overwrite anything in a repository. Protects backups from

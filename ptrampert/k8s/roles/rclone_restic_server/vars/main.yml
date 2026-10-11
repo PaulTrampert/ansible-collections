@@ -25,6 +25,9 @@ rclone_restic_server_args: >-
       '--cache-objects=false']
      + (['--append-only'] if rclone_restic_server_append_only | bool else []) }}
 
+# rclone checks the password on every request, so the cost stays modest.
+rclone_restic_server_bcrypt_cost: 10
+
 # Rendered once here because both the htpasswd Secret and the checksum below
 # use it. Templates used in one place are rendered where they are used.
 rclone_restic_server_htpasswd: "{{ lookup('ansible.builtin.template', 'htpasswd.j2') }}"
