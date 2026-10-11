@@ -270,3 +270,261 @@
                 kubectl delete --ignore-not-found --wait=false
                 pod/verify-nfs-writer pod/verify-nfs-reader pvc/verify-nfs
               changed_when: true
+
+- name: Verify the restic REST server
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_restic_image: docker.io/restic/restic:0.19.1
+    verify_restic_password: verify-repository-password
+    verify_restic_namespace: "{{ rclone_restic_server_namespace | default('rclone-restic-server') }}"
+    verify_restic_selector: app.kubernetes.io/name=rclone-restic-server
+    verify_restic_server: http://alice:alice-test-password@rclone-restic-server.{{ verify_restic_namespace }}.svc:8080
+    verify_restic_append_only_server: >-
+      http://alice:alice-test-password@rclone-restic-server.{{ restic_append_only_namespace }}.svc:8080
+    verify_restic_repository: rest:{{ verify_restic_server }}/alice/verify
+    # The same files in a pod and on the host, so that each side can check
+    # what it gets back against a source of its own.
+    verify_restic_source: |
+      mkdir -p "$src/sub"
+      seq 1 100000 > "$src/numbers"
+      echo 'backed up by restic' > "$src/sub/greeting"
+    verify_restic_host_dir: /tmp/verify-restic
+    # What restic on the host opens, directly on the remote rather than
+    # through the server.
+    verify_restic_direct: rclone:{{ rclone_restic_server_remote }}/alice/verify
+  tasks:
+    # The server must not hold any state of its own beyond the config copy,
+    # so the repositories can go away between runs.
+    - name: Remove the repositories a previous run left behind
+      ansible.builtin.file:
+        path: "{{ restic_store_home }}/repos"
+        state: absent
+
+    - name: Back up, check and restore through the server
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: init, backup, check, restore
+        verify_restic_script: |
+          src=/src
+          {{ verify_restic_source }}
+          restic init
+          restic backup /src
+          restic check --read-data
+          restic restore latest --target /restore
+          diff -r /src /restore/src
+
+    - name: Check the round trip succeeded
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    - name: Open the repository without credentials
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: no credentials
+        verify_restic_repository: >-
+          rest:http://rclone-restic-server.{{ verify_restic_namespace }}.svc:8080/alice/verify
+        verify_restic_script: restic cat config
+
+    - name: Check the server refused it
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc != 0
+          - "'401' in verify_restic.stdout"
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    - name: Open another user's repository
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: another user's repository
+        verify_restic_repository: >-
+          rest:http://bob:bob-test-password@rclone-restic-server.{{ verify_restic_namespace }}.svc:8080/alice/verify
+        verify_restic_script: restic cat config
+
+    - name: Check the server refused it
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc != 0
+          - "'403' in verify_restic.stdout"
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    # So that the refusal above is about whose repository it was.
+    - name: Create the other user's own repository
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: the user's own repository
+        verify_restic_repository: >-
+          rest:http://bob:bob-test-password@rclone-restic-server.{{ verify_restic_namespace }}.svc:8080/bob/verify
+        verify_restic_script: restic init
+
+    - name: Check the other user reached their own repository
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    # Stands in for rclone rewriting a refreshed token. The next converge must
+    # leave it alone and report no changes.
+    - name: Change the server's copy of the config
+      ansible.builtin.command: >-
+        kubectl exec -n {{ verify_restic_namespace }} deploy/rclone-restic-server -c rclone --
+        sh -c 'echo "# kept across restarts" >> /config/rclone.conf'
+      changed_when: true
+
+    # A pod that dies straight after a backup finished must not take the
+    # backup with it.
+    - name: Back up again through the server
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: second backup
+        verify_restic_script: |
+          src=/src
+          {{ verify_restic_source }}
+          echo 'second backup' > /src/second
+          restic backup /src
+
+    - name: Check the second backup succeeded
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    - name: Kill the server pod
+      ansible.builtin.command: >-
+        kubectl delete pod -n {{ verify_restic_namespace }} -l {{ verify_restic_selector }}
+        --grace-period=0 --force
+      changed_when: true
+
+    - name: Wait for the replacement pod
+      ansible.builtin.command: >-
+        kubectl wait pod -n {{ verify_restic_namespace }} -l {{ verify_restic_selector }}
+        --for=condition=Ready --timeout=60s
+      register: verify_restic_ready
+      until: verify_restic_ready.rc == 0
+      retries: 5
+      delay: 5
+      changed_when: false
+
+    - name: Read the replacement pod's copy of the config
+      ansible.builtin.command: >-
+        kubectl exec -n {{ verify_restic_namespace }} deploy/rclone-restic-server -c rclone --
+        cat /config/rclone.conf
+      register: verify_restic_config
+      changed_when: false
+
+    - name: Check the copy survived the pod
+      ansible.builtin.assert:
+        that:
+          - "'# kept across restarts' in verify_restic_config.stdout"
+        fail_msg: The replacement pod's config was seeded again
+
+    - name: Read the repository through the replacement pod
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: after the pod was replaced
+        verify_restic_script: |
+          restic check --read-data
+          test "$(restic snapshots --json | grep -o '"short_id"' | wc -l)" -eq 2
+
+    - name: Check both backups are still there
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    - name: Install restic and rclone on the host
+      ansible.builtin.apt:
+        name: [restic, rclone]
+        state: present
+
+    - name: Create a directory for the checks on the host
+      ansible.builtin.file:
+        path: "{{ verify_restic_host_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Configure the remote for rclone on the host
+      ansible.builtin.template:
+        src: templates/restic-remote-rclone.conf.j2
+        dest: "{{ verify_restic_host_dir }}/rclone.conf"
+        mode: "0600"
+
+    - name: Check the repository without the server
+      environment:
+        RESTIC_PASSWORD: "{{ verify_restic_password }}"
+        RCLONE_CONFIG: "{{ verify_restic_host_dir }}/rclone.conf"
+      block:
+        # The command the README gives for exporting a snapshot.
+        - name: Export the latest snapshot as a tarball, straight from the remote
+          ansible.builtin.shell:
+            cmd: |
+              set -o pipefail
+              rm -rf source dump
+              mkdir dump
+              restic -r {{ verify_restic_direct }} dump --archive tar latest / | gzip > backup.tar.gz
+              tar -xzf backup.tar.gz -C dump
+            chdir: "{{ verify_restic_host_dir }}"
+            executable: /bin/bash
+          changed_when: true
+
+        # The latest snapshot is the second backup.
+        - name: Compare the tarball with the source
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              src=source
+              {{ verify_restic_source }}
+              echo 'second backup' > source/second
+              diff -r source dump/src
+            chdir: "{{ verify_restic_host_dir }}"
+            executable: /bin/bash
+          changed_when: false
+
+        # Writes the remote behind the servers' backs: a backup, then a prune
+        # that deletes what the servers may have listed and cached.
+        - name: Back up and prune straight on the remote
+          ansible.builtin.shell:
+            cmd: >-
+              restic -r {{ verify_restic_direct }} backup /etc/hostname &&
+              restic -r {{ verify_restic_direct }} forget --keep-last 1 --group-by '' --prune
+          changed_when: true
+
+    - name: Read the repository through the server after the prune
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: after a prune behind the server's back
+        verify_restic_script: |
+          restic check --read-data
+          test "$(restic snapshots --json | grep -o '"short_id"' | wc -l)" -eq 1
+
+    - name: Check the server saw the prune
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+    - name: Back up and try to prune through the append-only server
+      ansible.builtin.include_tasks: tasks/run_restic.yml
+      vars:
+        verify_restic_step: append-only
+        verify_restic_repository: rest:{{ verify_restic_append_only_server }}/alice/verify
+        verify_restic_script: |
+          src=/src
+          {{ verify_restic_source }}
+          restic backup /src
+          if restic forget --keep-last 1 --group-by '' --prune; then
+            echo 'forget --prune succeeded on an append-only server'
+            exit 1
+          fi
+          echo 'more' > /src/more
+          restic backup /src
+
+    - name: Check backups succeeded and the prune did not
+      ansible.builtin.assert:
+        that:
+          - verify_restic.rc == 0
+        fail_msg: "restic said: {{ verify_restic.stdout }}"

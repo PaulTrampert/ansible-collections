@@ -18,3 +18,27 @@ control_plane_vip: "{{ k8s_api_vip }}"
 # The only storage provider in the test cluster, so claims that name no class
 # should get it. Exercises the role's default-class toggle.
 local_path_provisioner_storage_class_default: true
+
+# The restic REST server stores its repositories over SFTP on the first
+# control-plane node, under a user the playbook creates for it. Test
+# credentials for throwaway VMs; real ones belong in a vault.
+restic_store_host: "{{ hostvars[groups['control_plane'][0]]['ansible_host'] }}"
+restic_store_user: restic-store
+restic_store_home: /srv/restic-store
+restic_store_password: restic-store-test-password
+# A second server, refusing deletions, serves the same repositories.
+restic_append_only_namespace: rclone-restic-append-only
+
+rclone_restic_server_config:
+  store:
+    type: sftp
+    host: "{{ restic_store_host }}"
+    user: "{{ restic_store_user }}"
+    # rclone obscure restic-store-test-password
+    pass: 2UZj_VN4J-0TTs-2O1fEyud9nTQf9RQizFKjPOnNM9rWFItr6vV4taV0
+rclone_restic_server_remote: store:repos
+rclone_restic_server_users:
+  - name: alice
+    password: alice-test-password
+  - name: bob
+    password: bob-test-password

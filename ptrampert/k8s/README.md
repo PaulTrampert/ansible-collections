@@ -11,6 +11,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
 | `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
+| `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -119,6 +120,88 @@ Deleting a claim deletes the volume's directory on the share. Deleting a pod, De
 
 Mount options default to `nfsvers=4.1` and are configurable, as is a `nfs_provisioner_sub_dir` under the share to keep the volumes in one place.
 
+## Backup storage
+
+`ptrampert.k8s.rclone_restic_server` runs `rclone serve restic` in the cluster, behind a `ClusterIP` Service. It speaks restic's REST backend protocol and stores the repositories on any rclone remote: a cloud drive, SFTP, an object store. Moving the backups somewhere else is then a change to the rclone config rather than to every client.
+
+It is a storage endpoint only. What gets backed up, when, and how long it is kept belong to the restic clients, such as k8up.
+
+```yaml
+rclone_restic_server_config:
+  offsite:
+    type: sftp
+    host: backup.example.com
+    user: restic
+    pass: "{{ vault_restic_sftp_pass_obscured }}"   # as `rclone obscure` prints it
+rclone_restic_server_remote: offsite:restic
+rclone_restic_server_users:
+  - name: app1
+    password: "{{ vault_restic_app1_password }}"
+```
+
+`rclone_restic_server_config` is the rclone config itself, a mapping of remote name to its settings, rendered as `rclone.conf`. It is passed through as given, so a `crypt` remote wrapping another one needs nothing from the role (restic encrypts its repositories anyway). Settings rclone keeps obscured must be given obscured.
+
+The role runs on one control-plane host and talks to the cluster through `kubernetes.core`, which needs the Python Kubernetes client. Ubuntu's package is older than `kubernetes.core` supports, so the role installs the client from PyPI into a venv under `/opt/rclone-restic-server`, at the version `rclone_restic_server_kubernetes_client_version` pins.
+
+Clients reach it at:
+
+```
+rest:http://<user>:<password>@rclone-restic-server.<namespace>.svc:8080/<user>/<repo>
+```
+
+### Users
+
+Users are required, since without them `rclone serve restic` lets anyone in. Each user reaches only the repositories under `/<user>/` (`--private-repos`), so give every client its own user: then a client can neither read nor delete another one's backups. That is the access control. The cluster's CNI, Flannel, does not enforce `NetworkPolicy`, so the role creates none.
+
+The role stores each password as a bcrypt hash. The salt comes from the namespace and the user name rather than at random, so an unchanged password hashes the same on every run and the pod is only restarted when a password changes. Hashing happens on the controller, which needs bcrypt support: `passlib`, or a libc `crypt` that supports it, as libxcrypt on most Linux distributions does.
+
+### The config is seeded, not managed
+
+Remotes that sign in with OAuth (OneDrive, Google Drive, Dropbox and others) rewrite their token in `rclone.conf` every time rclone refreshes it, and a Secret mounts read-only. So the role stores the rendered config in a seed Secret, and an init container copies it to a small volume only when the volume holds no config yet. rclone runs against that copy, and refreshed tokens survive pod restarts. Changing `rclone_restic_server_config` afterwards does not touch an existing copy.
+
+To set up an OAuth remote, run `rclone config` on a machine with a browser and copy the remote's section, `token` included, into `rclone_restic_server_config`, with the token in the playbook's vault.
+
+To re-authorise one, after the token has been revoked or has expired:
+
+1. Run `rclone authorize "<type>"` (for example `rclone authorize "onedrive"`) on a machine with a browser.
+2. Put the new token in the seed value and run the playbook, which updates the seed Secret.
+3. Delete the copy and the pod, so that the replacement seeds itself again:
+
+   ```sh
+   kubectl exec -n rclone-restic-server deploy/rclone-restic-server -c rclone -- rm /config/rclone.conf
+   kubectl delete pod -n rclone-restic-server -l app.kubernetes.io/name=rclone-restic-server
+   ```
+
+Losing the volume means losing the refreshed token. The next pod falls back to the seed, which works as long as the provider still accepts it, and otherwise needs re-authorising.
+
+The volume uses the cluster's default storage class unless `rclone_restic_server_storage_class` names another. On `local_path_provisioner` it lives on one node, and so does the pod. NFS lets the pod move.
+
+### Append-only
+
+`rclone_restic_server_append_only: true` refuses every delete or overwrite, so a compromised client cannot destroy its own backups. It also makes `restic forget --prune` fail, and k8up's `Prune` jobs rely on it. With it on, pruning has to run somewhere that writes the remote directly, for example `restic -r rclone:...` as below. It is off by default.
+
+### Plain HTTP
+
+The Service is only reachable from inside the cluster, but from every pod in every namespace. Traffic between nodes crosses Flannel's VXLAN unencrypted, HTTP Basic credentials included. restic encrypts the repository data itself.
+
+### Restoring without the cluster
+
+The server is only needed because k8up has no `rclone:` backend. After losing the cluster, plain `restic` on any machine with rclone opens a repository straight on the remote, running `rclone serve restic --stdio` itself:
+
+```sh
+restic -r rclone:offsite:restic/app1/<repo> snapshots
+```
+
+Configure the remote for that rclone as `rclone_restic_server_config` does. For an OAuth remote, the server's copy on its volume holds the freshest token.
+
+The remote holds a restic repository, not browsable files. To take any snapshot, or a path inside one, out as a tarball:
+
+```sh
+restic -r rclone:offsite:restic/app1/<repo> dump --archive tar latest / | gzip > backup.tar.gz
+```
+
+The server runs with `--cache-objects=false`. With the cache on, it keeps serving objects it has seen after something else deletes them from the remote, such as a prune run this way.
+
 ## Example playbook
 
 ```yaml
@@ -149,6 +232,13 @@ Mount options default to `nfsvers=4.1` and are configurable, as is a `nfs_provis
     - ptrampert.k8s.local_path_provisioner
     # Needs nfs_provisioner_server and nfs_provisioner_share.
     - ptrampert.k8s.nfs_provisioner
+
+- name: Serve backup storage
+  hosts: control_plane[0]
+  become: true
+  roles:
+    # Needs rclone_restic_server_config, _remote and _users.
+    - ptrampert.k8s.rclone_restic_server
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.

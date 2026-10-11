@@ -29,6 +29,7 @@ vagrant up
 ansible-playbook -i inventory/stacked-ha.yml playbook.yml   # converge
 ansible-playbook -i inventory/stacked-ha.yml playbook.yml   # must report changed=0
 ansible-playbook -i inventory/stacked-ha.yml verify.yml
+ansible-playbook -i inventory/stacked-ha.yml playbook.yml   # still changed=0 after verify.yml changed the restic server's config copy
 vagrant destroy -f
 ```
 
@@ -41,6 +42,8 @@ To get back to a clean baseline without rebuilding, take a snapshot right after 
 `verify.yml` checks that the cluster was built with the address the inventory asked for, that every inventory host is a Ready node, that every control-plane host joined as one and runs an etcd member, that the system pods are Ready, and that in-cluster DNS resolves. Everything goes through the load balancer, because the kubeconfig points at it. On the stacked topologies it also checks that exactly one node holds the VIP and that *every* control-plane node's HAProxy serves the API, not only the one currently holding it.
 
 It then checks storage. On every topology: that the local-path `StorageClass` is the cluster default, that a claim naming no class binds, and that a second pod reads back what the first one wrote to the volume. On `multi` also the NFS provider: that its class is provisioned by the NFS CSI driver, that a pod on one worker reads back what a pod on the other worker wrote to the same volume, and that the volume really is a directory on `nfs1`'s export. It removes what it created afterwards, so it can be run again.
+
+Last, the restic REST server, with restic in throwaway pods against its Service: that `init`, a backup, `check --read-data` and a restore matching the source succeed; that a request without credentials gets 401 and one for another user's repository 403; that a copy of the config changed on the volume survives killing the pod, and the replacement serves both backups taken so far. Then, on the host, with restic's `rclone:` backend straight on the remote and no server: that `restic dump --archive tar` of the latest snapshot matches the source, and that a backup and a prune run there are what the server shows afterwards. Finally, through the append-only instance, that `forget --prune` fails and a backup still succeeds. It deletes the repositories at the start, so it can be run again.
 
 `failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
 
@@ -58,6 +61,10 @@ rather than building one.
 
 The other topologies declare an empty `nfs_servers` group, and both the export play and the
 provisioner are skipped there.
+
+## The restic server's remote
+
+`playbook.yml` creates a `restic-store` user on the first control-plane node, and both instances of `ptrampert.k8s.rclone_restic_server` store the repositories there over SFTP, under `/srv/restic-store/repos`. The second instance, in the `rclone-restic-append-only` namespace, serves the same repositories append-only. The credentials and the users' bcrypt hashes in `inventory/group_vars/all.yml` are test values for throwaway VMs.
 
 ## Adding a control-plane node
 

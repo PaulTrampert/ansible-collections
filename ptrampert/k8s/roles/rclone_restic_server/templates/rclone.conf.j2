@@ -1,0 +1,13 @@
+{% for remote, settings in rclone_restic_server_config.items() %}
+[{{ remote }}]
+{% for key, value in settings.items() %}
+{% if value is boolean %}
+{{ key }} = {{ value | string | lower }}
+{% elif value is mapping %}
+{{ key }} = {{ value | to_json }}
+{% else %}
+{{ key }} = {{ value }}
+{% endif %}
+{% endfor %}
+
+{% endfor %}

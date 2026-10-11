@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ rclone_restic_server_name }}-config
+  namespace: {{ rclone_restic_server_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+{% if rclone_restic_server_storage_class | length > 0 %}
+  storageClassName: {{ rclone_restic_server_storage_class }}
+{% endif %}
+  resources:
+    requests:
+      storage: {{ rclone_restic_server_config_volume_size }}

@@ -1,0 +1,39 @@
+---
+rclone_restic_server_name: rclone-restic-server
+rclone_restic_server_image: docker.io/rclone/rclone:{{ rclone_restic_server_version }}
+rclone_restic_server_port: 8080
+
+# Holds the Python Kubernetes client kubernetes.core runs with.
+rclone_restic_server_venv: /opt/rclone-restic-server/venv
+
+# The image runs as root unless told otherwise.
+rclone_restic_server_uid: 65532
+
+# Holds one small text file, but some provisioners refuse tiny claims.
+rclone_restic_server_config_volume_size: 64Mi
+
+# --cache-objects is on by default and keeps serving objects it has seen after
+# something else deletes them from the remote, such as a prune that runs
+# directly against it. Off, every request asks the remote.
+rclone_restic_server_args: >-
+  {{ ['serve', 'restic', rclone_restic_server_remote,
+      '--addr', ':' ~ rclone_restic_server_port,
+      '--config', '/config/rclone.conf',
+      '--cache-dir', '/tmp/rclone',
+      '--htpasswd', '/auth/htpasswd',
+      '--private-repos',
+      '--cache-objects=false']
+     + (['--append-only'] if rclone_restic_server_append_only | bool else []) }}
+
+# rclone checks the password on every request, so the cost stays modest.
+rclone_restic_server_bcrypt_cost: 10
+
+# Rendered once here because both the htpasswd Secret and the checksum below
+# use it. Templates used in one place are rendered where they are used.
+rclone_restic_server_htpasswd: "{{ lookup('ansible.builtin.template', 'htpasswd.j2') }}"
+
+# Rolls the pod when the server's flags or its users change. The seed config is
+# left out on purpose: changing it does not touch the copy the server runs
+# with.
+rclone_restic_server_checksum: >-
+  {{ (rclone_restic_server_args | to_json ~ rclone_restic_server_htpasswd) | hash('sha256') }}

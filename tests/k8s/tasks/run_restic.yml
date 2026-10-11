@@ -1,0 +1,47 @@
+---
+# Runs a shell script in a throwaway pod with restic, against
+# verify_restic_repository, and leaves its exit status and output in
+# verify_restic.rc and verify_restic.stdout for the caller to check. The pod
+# is waited for and its logs read afterwards: kubectl run --attach can miss
+# the output of a container that exits quickly.
+- name: "Start restic in a pod: {{ verify_restic_step }}"
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - run
+      - verify-restic
+      - --image={{ verify_restic_image }}
+      - --restart=Never
+      - --env=RESTIC_REPOSITORY={{ verify_restic_repository }}
+      - --env=RESTIC_PASSWORD={{ verify_restic_password }}
+      - --command
+      - --
+      - sh
+      - -ec
+      - "{{ verify_restic_script }}"
+  changed_when: true
+
+- name: "Run restic in a pod: {{ verify_restic_step }}"
+  block:
+    - name: "Wait for the pod to finish: {{ verify_restic_step }}"
+      ansible.builtin.command: kubectl get pod verify-restic -o jsonpath={.status.phase}
+      register: verify_restic_phase
+      until: verify_restic_phase.stdout in ['Succeeded', 'Failed']
+      retries: 60
+      delay: 5
+      changed_when: false
+
+    - name: "Read the pod's output: {{ verify_restic_step }}"
+      ansible.builtin.command: kubectl logs verify-restic
+      register: verify_restic_logs
+      changed_when: false
+
+    - name: "Record the outcome: {{ verify_restic_step }}"
+      ansible.builtin.set_fact:
+        verify_restic:
+          rc: "{{ 0 if verify_restic_phase.stdout == 'Succeeded' else 1 }}"
+          stdout: "{{ verify_restic_logs.stdout }}"
+  always:
+    - name: "Remove the pod: {{ verify_restic_step }}"
+      ansible.builtin.command: kubectl delete pod verify-restic --ignore-not-found
+      changed_when: true
