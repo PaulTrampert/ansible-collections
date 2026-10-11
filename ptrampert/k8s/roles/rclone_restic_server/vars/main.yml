@@ -25,8 +25,9 @@ rclone_restic_server_args: >-
       '--cache-objects=false']
      + (['--append-only'] if rclone_restic_server_append_only | bool else []) }}
 
+# Rendered once here because both the htpasswd Secret and the checksum below
+# use it. Templates used in one place are rendered where they are used.
 rclone_restic_server_htpasswd: "{{ lookup('ansible.builtin.template', 'htpasswd.j2') }}"
-rclone_restic_server_rclone_conf: "{{ lookup('ansible.builtin.template', 'rclone.conf.j2') }}"
 
 # Rolls the pod when the server's flags or its users change. The seed config is
 # left out on purpose: changing it does not touch the copy the server runs
