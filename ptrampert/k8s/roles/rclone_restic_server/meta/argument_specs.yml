@@ -20,7 +20,8 @@ argument_specs:
         clear.
       - Runs on a single control-plane host, which needs kubectl access to the
         cluster, as ptrampert.k8s.control_plane leaves it. Installs the Python
-        Kubernetes client on that host.
+        Kubernetes client from PyPI on that host, in a venv under
+        C(/opt/rclone-restic-server).
     options:
       rclone_restic_server_version:
         type: str
@@ -88,6 +89,13 @@ argument_specs:
         description:
           - Storage class of the small volume holding the server's copy of the
             config. Empty uses the cluster's default class.
+      rclone_restic_server_kubernetes_client_version:
+        type: str
+        default: "36.0.3"
+        description:
+          - Version of the Python Kubernetes client, from PyPI, that the role
+            installs for C(kubernetes.core). Its major version follows the
+            Kubernetes minor version it was built against.
       rclone_restic_server_kubeconfig:
         type: str
         default: /etc/kubernetes/admin.conf

@@ -32,5 +32,10 @@ rclone_restic_server_append_only: false
 # config. Empty uses the cluster's default class.
 rclone_restic_server_storage_class: ""
 
+# Version of the Python Kubernetes client the role installs for
+# kubernetes.core, from PyPI. Its major version follows the Kubernetes minor
+# version it was built against.
+rclone_restic_server_kubernetes_client_version: "36.0.3"
+
 # Admin kubeconfig used to talk to the cluster.
 rclone_restic_server_kubeconfig: /etc/kubernetes/admin.conf

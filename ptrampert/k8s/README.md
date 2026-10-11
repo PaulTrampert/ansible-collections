@@ -141,6 +141,8 @@ rclone_restic_server_users:
 
 `rclone_restic_server_config` is the rclone config itself, a mapping of remote name to its settings, rendered as `rclone.conf`. It is passed through as given, so a `crypt` remote wrapping another one needs nothing from the role (restic encrypts its repositories anyway). Settings rclone keeps obscured must be given obscured.
 
+The role runs on one control-plane host and talks to the cluster through `kubernetes.core`, which needs the Python Kubernetes client. Ubuntu's package is older than `kubernetes.core` supports, so the role installs the client from PyPI into a venv under `/opt/rclone-restic-server`, at the version `rclone_restic_server_kubernetes_client_version` pins.
+
 Clients reach it at:
 
 ```

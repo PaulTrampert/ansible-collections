@@ -12,40 +12,52 @@
       distinct name containing no ':' or '/'. Without users the server would
       let anyone in.
 
-# kubernetes.core.k8s runs on this host and needs the Python client.
-- name: Install the Python Kubernetes client
+# kubernetes.core.k8s runs on this host and needs the Python client. The
+# distribution's package is older than kubernetes.core supports, so the client
+# comes from PyPI, into a venv of its own.
+- name: Install venv support
   ansible.builtin.apt:
-    name: python3-kubernetes
+    name: python3-venv
     state: present
 
-- name: Create the namespace
-  kubernetes.core.k8s:
-    kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: "{{ rclone_restic_server_namespace }}"
+- name: Install the Python Kubernetes client
+  ansible.builtin.pip:
+    name: kubernetes=={{ rclone_restic_server_kubernetes_client_version }}
+    virtualenv: "{{ rclone_restic_server_venv }}"
+    virtualenv_command: python3 -m venv
 
-- name: Store the seed config and the users
-  kubernetes.core.k8s:
-    kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
-    template: secrets.yaml.j2
-  no_log: true
+- name: Deploy the server
+  vars:
+    ansible_python_interpreter: "{{ rclone_restic_server_venv }}/bin/python"
+  block:
+    - name: Create the namespace
+      kubernetes.core.k8s:
+        kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ rclone_restic_server_namespace }}"
 
-- name: Claim the volume for the server's copy of the config
-  kubernetes.core.k8s:
-    kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
-    template: config-volume.yaml.j2
+    - name: Store the seed config and the users
+      kubernetes.core.k8s:
+        kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
+        template: secrets.yaml.j2
+      no_log: true
 
-- name: Run the server
-  kubernetes.core.k8s:
-    kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
-    template: deployment.yaml.j2
-    wait: true
-    wait_timeout: 300
+    - name: Claim the volume for the server's copy of the config
+      kubernetes.core.k8s:
+        kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
+        template: config-volume.yaml.j2
 
-- name: Expose the server inside the cluster
-  kubernetes.core.k8s:
-    kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
-    template: service.yaml.j2
+    - name: Run the server
+      kubernetes.core.k8s:
+        kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
+        template: deployment.yaml.j2
+        wait: true
+        wait_timeout: 300
+
+    - name: Expose the server inside the cluster
+      kubernetes.core.k8s:
+        kubeconfig: "{{ rclone_restic_server_kubeconfig }}"
+        template: service.yaml.j2

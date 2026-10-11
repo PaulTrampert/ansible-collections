@@ -3,6 +3,9 @@ rclone_restic_server_name: rclone-restic-server
 rclone_restic_server_image: docker.io/rclone/rclone:{{ rclone_restic_server_version }}
 rclone_restic_server_port: 8080
 
+# Holds the Python Kubernetes client kubernetes.core runs with.
+rclone_restic_server_venv: /opt/rclone-restic-server/venv
+
 # The image runs as root unless told otherwise.
 rclone_restic_server_uid: 65532
 
