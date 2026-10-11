@@ -17,6 +17,7 @@ argument_specs:
     options:
       local_path_provisioner_version:
         type: str
+        # renovate: datasource=github-tags depName=rancher/local-path-provisioner
         default: "v0.0.37"
         description:
           - local-path-provisioner release to install. Upstream publishes no

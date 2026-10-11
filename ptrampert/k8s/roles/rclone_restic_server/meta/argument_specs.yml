@@ -25,6 +25,7 @@ argument_specs:
     options:
       rclone_restic_server_version:
         type: str
+        # renovate: datasource=docker depName=rclone/rclone
         default: "1.75.2"
         description:
           - Tag of the upstream C(rclone/rclone) image to run.
@@ -95,6 +96,7 @@ argument_specs:
             config. Empty uses the cluster's default class.
       rclone_restic_server_kubernetes_client_version:
         type: str
+        # renovate: datasource=pypi depName=kubernetes
         default: "36.0.3"
         description:
           - Version of the Python Kubernetes client, from PyPI, that the role

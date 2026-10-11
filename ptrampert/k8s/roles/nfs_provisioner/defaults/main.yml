@@ -1,6 +1,7 @@
 ---
 # csi-driver-nfs chart version. The chart's app version installs the matching
 # driver images.
+# renovate: datasource=helm depName=csi-driver-nfs registryUrl=https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
 nfs_provisioner_version: "4.13.4"
 
 # Where the chart comes from. kubernetes-csi publishes it from the driver's own
