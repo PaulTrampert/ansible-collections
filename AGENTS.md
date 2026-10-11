@@ -89,3 +89,7 @@ The top-level `README.md` is written for people using the collections: what each
 ## Versioning
 
 Each collection is versioned independently with semver via `version` in its `galaxy.yml`. Bump it when making changes intended for release.
+
+## Pull requests
+
+When addressing review comments, make one commit per comment, unless a single logical change addresses several comments, in which case that change is one commit. Cite the commit in the reply to each comment it addresses.
