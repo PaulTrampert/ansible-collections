@@ -1,6 +1,7 @@
 ---
 # Rancher local-path-provisioner release. The role installs the Helm chart from
 # the source tree at this tag; upstream publishes no chart repository.
+# renovate: datasource=github-tags depName=rancher/local-path-provisioner
 local_path_provisioner_version: "v0.0.37"
 
 # Namespace the provisioner runs in. Created if it does not exist.

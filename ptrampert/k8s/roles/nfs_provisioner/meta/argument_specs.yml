@@ -20,6 +20,7 @@ argument_specs:
     options:
       nfs_provisioner_version:
         type: str
+        # renovate: datasource=helm depName=csi-driver-nfs registryUrl=https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
         default: "4.13.4"
         description:
           - Version of the csi-driver-nfs Helm chart to install.

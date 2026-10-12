@@ -48,6 +48,10 @@ Each collection has its own version in its `galaxy.yml` and its own `CHANGELOG.m
 published, but the version still matters: dependency constraints between the collections are
 checked against it.
 
+The roles pin the upstream software they install. Renovate proposes newer releases weekly, one
+pull request per collection, and each one raises that collection's patch version. They are
+tested before merging like any other change.
+
 ## Contributing
 
 `AGENTS.md` describes the layout, the conventions roles follow, and how they are tested: on real

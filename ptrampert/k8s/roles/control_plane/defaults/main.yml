@@ -62,9 +62,11 @@ control_plane_shutdown_grace_period_critical_pods: "20s"
 # Users who get a copy of the cluster-admin kubeconfig as ~/.kube/config.
 control_plane_kubeconfig_users: []
 
+# renovate: datasource=github-releases depName=helm/helm
 control_plane_helm_version: "v4.3.0"
 
 # Flannel release (Helm chart version) used as the cluster's CNI.
+# renovate: datasource=helm depName=flannel registryUrl=https://flannel-io.github.io/flannel/
 control_plane_flannel_version: "v0.28.9"
 
 # Interface Flannel uses for traffic between nodes. Empty means the interface

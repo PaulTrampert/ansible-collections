@@ -1,0 +1,94 @@
+// Repository configuration for Renovate, which runs from
+// .github/workflows/renovate.yml with the global settings in
+// .github/renovate/global-config.js.
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+
+  enabledManagers: ['custom.regex', 'ansible-galaxy', 'github-actions'],
+
+  // The workflow runs weekly, which is the schedule. Renovate has none of its
+  // own, so a run started by hand is not held back to a time window.
+  prHourlyLimit: 0,
+
+  // Tests need Vagrant and VirtualBox, which GitHub Actions doesn't have, so
+  // every update is tested on a workstation before it is merged.
+  automerge: false,
+
+  customManagers: [
+    {
+      // Version pins in role variables, each under an annotation naming where
+      // its releases come from:
+      //
+      //   # renovate: datasource=<datasource> depName=<name> [registryUrl=<url>] [versioning=<scheme>]
+      //   <variable>: "<version>"
+      //
+      // The same annotation goes above the variable's `default:` in
+      // meta/argument_specs.yml, so both are updated together.
+      customType: 'regex',
+      managerFilePatterns: [
+        '/^ptrampert/[^/]+/roles/[^/]+/(defaults/main|vars/main|meta/argument_specs)\\.ya?ml$/',
+      ],
+      matchStrings: [
+        '#[ \\t]*renovate:[ \\t]*datasource=(?<datasource>\\S+)[ \\t]+depName=(?<depName>\\S+)(?:[ \\t]+registryUrl=(?<registryUrl>\\S+))?(?:[ \\t]+versioning=(?<versioning>\\S+))?[ \\t]*\\n[ \\t]*\\w+:[ \\t]*["\']?(?<currentValue>[^"\'\\s]+)["\']?',
+      ],
+    },
+  ],
+
+  packageRules: [
+    // One branch per collection, so a run opens at most one PR for each. Each
+    // bumps its collection's PATCH version and adds a CHANGELOG.md entry.
+    {
+      matchFileNames: ['ptrampert/k8s/**'],
+      groupName: 'ptrampert.k8s',
+      separateMajorMinor: false,
+      postUpgradeTasks: {
+        commands: ['bash .github/renovate/bump-collection.sh'],
+        dataFileTemplate: '{{#each upgrades}}{{{packageFile}}} {{{depName}}} {{{currentValue}}} {{{newValue}}}\n{{/each}}',
+        fileFilters: ['ptrampert/k8s/galaxy.yml', 'ptrampert/k8s/CHANGELOG.md'],
+        executionMode: 'branch',
+      },
+      prBodyNotes: [
+        'This bumps `ptrampert.k8s` by a PATCH. If consuming the update needs changes downstream, raise the bump to MINOR or MAJOR in `galaxy.yml` and `CHANGELOG.md` before merging.',
+      ],
+    },
+    {
+      matchFileNames: ['ptrampert/general_services/**'],
+      groupName: 'ptrampert.general_services',
+      separateMajorMinor: false,
+      postUpgradeTasks: {
+        commands: ['bash .github/renovate/bump-collection.sh'],
+        dataFileTemplate: '{{#each upgrades}}{{{packageFile}}} {{{depName}}} {{{currentValue}}} {{{newValue}}}\n{{/each}}',
+        fileFilters: ['ptrampert/general_services/galaxy.yml', 'ptrampert/general_services/CHANGELOG.md'],
+        executionMode: 'branch',
+      },
+      prBodyNotes: [
+        'This bumps `ptrampert.general_services` by a PATCH. If consuming the update needs changes downstream, raise the bump to MINOR or MAJOR in `galaxy.yml` and `CHANGELOG.md` before merging.',
+      ],
+    },
+
+    // The collections depend on each other, but they are not on Galaxy, so
+    // there is nothing to look up.
+    {
+      matchManagers: ['ansible-galaxy'],
+      matchPackageNames: ['ptrampert.*'],
+      enabled: false,
+    },
+
+    // The Python Kubernetes client's major version follows the Kubernetes
+    // minor version it was built for (36.x for 1.36). Keep it at the cluster's
+    // version, node_kubernetes_version in the node role; moving this cap is
+    // part of upgrading Kubernetes.
+    {
+      matchDatasources: ['pypi'],
+      matchPackageNames: ['kubernetes'],
+      allowedVersions: '<37',
+    },
+
+    {
+      matchManagers: ['github-actions'],
+      groupName: 'GitHub Actions',
+      separateMajorMinor: false,
+    },
+  ],
+}

@@ -119,11 +119,13 @@ argument_specs:
           - Users who get the cluster-admin kubeconfig as ~/.kube/config.
       control_plane_helm_version:
         type: str
+        # renovate: datasource=github-releases depName=helm/helm
         default: "v4.3.0"
         description:
           - Helm release to install.
       control_plane_flannel_version:
         type: str
+        # renovate: datasource=helm depName=flannel registryUrl=https://flannel-io.github.io/flannel/
         default: "v0.28.9"
         description:
           - Flannel Helm chart version.
