@@ -1,0 +1,74 @@
+---
+# A namespace of workloads for K8up to back up: for each storage class, a claim
+# and a pod that fills it and keeps it mounted, so that K8up backs up a
+# ReadWriteOnce claim on the node the pod runs on. And a stand-in database
+# whose dump command is in its annotations.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ verify_k8up_namespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: verify-k8up-repo
+  namespace: {{ verify_k8up_namespace }}
+type: Opaque
+stringData:
+  repository-password: {{ verify_k8up_repository_password }}
+  username: {{ verify_k8up_user }}
+  password: {{ verify_k8up_user_password }}
+{% for claim in verify_k8up_claims %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ claim.name }}
+  namespace: {{ verify_k8up_namespace }}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ claim.class }}
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ claim.name }}
+  namespace: {{ verify_k8up_namespace }}
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: app
+      image: busybox:1.37
+      command:
+        - sh
+        - -c
+        - {{ ('src=/data\n' ~ verify_k8up_source ~ 'exec sleep 86400\n') | to_json }}
+      readinessProbe:
+        exec:
+          command: [test, -f, /data/sub/greeting]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: {{ claim.name }}
+{% endfor %}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-k8up-db
+  namespace: {{ verify_k8up_namespace }}
+  annotations:
+    k8up.io/backupcommand: {{ verify_k8up_dump_command | to_json }}
+    k8up.io/file-extension: .sql
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: db
+      image: busybox:1.37
+      command: [sleep, "86400"]

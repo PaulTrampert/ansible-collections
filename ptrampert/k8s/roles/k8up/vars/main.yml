@@ -1,0 +1,17 @@
+---
+k8up_release: k8up
+k8up_chart: k8up
+
+# One directory per chart version, so that a new version is pulled next to the
+# old one rather than over it.
+k8up_chart_dir: /usr/local/lib/k8up-{{ k8up_version }}
+
+# Holds the Python Kubernetes client kubernetes.core runs with.
+k8up_venv: /opt/k8up/venv
+
+# Owns the CRDs' fields on the API server in Helm's place.
+k8up_field_manager: ptrampert.k8s.k8up
+
+k8up_values:
+  k8up:
+    timezone: "{{ k8up_timezone }}"

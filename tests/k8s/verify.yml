@@ -528,3 +528,258 @@
         that:
           - verify_restic.rc == 0
         fail_msg: "restic said: {{ verify_restic.stdout }}"
+
+- name: Verify the K8up backup operator
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_k8up_namespace: verify-k8up
+    verify_k8up_user: k8up
+    verify_k8up_user_password: k8up-test-password
+    verify_k8up_repository_password: verify-k8up-repository-password
+    verify_k8up_backend:
+      repoPasswordSecretRef:
+        name: verify-k8up-repo
+        key: repository-password
+      rest:
+        url: >-
+          http://rclone-restic-server.{{ rclone_restic_server_namespace | default('rclone-restic-server') }}.svc:8080/{{ verify_k8up_user }}/verify
+        userSecretRef:
+          name: verify-k8up-repo
+          key: username
+        # Spelled this way upstream.
+        passwordSecretReg:
+          name: verify-k8up-repo
+          key: password
+    # A claim on node-local storage everywhere, and one on NFS where there is
+    # an NFS server.
+    verify_k8up_claims: >-
+      {{ [{'name': 'verify-k8up-local',
+           'class': local_path_provisioner_storage_class_name | default('local-path')}]
+         + ([{'name': 'verify-k8up-nfs',
+              'class': nfs_provisioner_storage_class_name | default('nfs')}]
+            if groups['nfs_servers'] | length > 0 else []) }}
+    # What each pod writes to its claim. The host builds the same files to
+    # check what it gets back from the repository.
+    verify_k8up_source: |
+      mkdir -p "$src/sub"
+      seq 1 100000 > "$src/numbers"
+      echo 'backed up by k8up' > "$src/sub/greeting"
+    # The stand-in database's dump tool. K8up stores its output as
+    # /<namespace>-<container><file extension>.
+    verify_k8up_dump_command: sh -c 'seq 1 50000'
+    verify_k8up_dump_file: /{{ verify_k8up_namespace }}-db.sql
+    verify_k8up_host_dir: /tmp/verify-k8up
+    # What restic on the host opens: the repository straight on the remote,
+    # as after losing the cluster.
+    verify_k8up_direct: rclone:{{ rclone_restic_server_remote }}/{{ verify_k8up_user }}/verify
+  tasks:
+    - name: Wait for the operator
+      ansible.builtin.command: >-
+        kubectl rollout status deployment/k8up -n {{ k8up_namespace | default('k8up') }} --timeout=300s
+      changed_when: false
+
+    # The role applies the CRDs itself, because Helm never upgrades them.
+    - name: Read who manages the Schedule CRD
+      ansible.builtin.command: >-
+        kubectl get crd schedules.k8up.io -o jsonpath={.metadata.managedFields[*].manager}
+      register: verify_k8up_crd_managers
+      changed_when: false
+
+    - name: Check the role applied the CRDs
+      ansible.builtin.assert:
+        that:
+          - "'ptrampert.k8s.k8up' in verify_k8up_crd_managers.stdout.split()"
+        fail_msg: "Schedule CRD managed by {{ verify_k8up_crd_managers.stdout }}"
+
+    - name: Remove the repository a previous run left behind
+      ansible.builtin.file:
+        path: "{{ restic_store_home }}/repos/{{ verify_k8up_user }}"
+        state: absent
+
+    - name: Back up and restore the namespace
+      block:
+        - name: Create the workloads
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/verify-k8up.yaml.j2') }}"
+          changed_when: true
+
+        - name: Wait for the workloads to fill their volumes
+          ansible.builtin.command: >-
+            kubectl wait pod --all -n {{ verify_k8up_namespace }} --for=condition=Ready --timeout=300s
+          changed_when: false
+
+        - name: Schedule backups of the namespace
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/verify-k8up-schedule.yaml.j2') }}"
+          changed_when: true
+
+        - name: Wait for the Schedule to start a backup
+          ansible.builtin.command: >-
+            kubectl get backups -n {{ verify_k8up_namespace }} -o name
+          register: verify_k8up_backups
+          until: verify_k8up_backups.stdout_lines | length > 0
+          retries: 30
+          delay: 5
+          changed_when: false
+
+        - name: Wait for the backup to finish
+          ansible.builtin.command: >-
+            kubectl wait {{ verify_k8up_backups.stdout_lines[0] }} -n {{ verify_k8up_namespace }}
+            --for=condition=Completed --timeout=600s
+          changed_when: false
+
+        - name: Read how the backup finished
+          ansible.builtin.command:
+            argv:
+              - kubectl
+              - get
+              - "{{ verify_k8up_backups.stdout_lines[0] }}"
+              - -n
+              - "{{ verify_k8up_namespace }}"
+              - -o
+              - jsonpath={.status.conditions[?(@.type=="Completed")].reason}
+          register: verify_k8up_backup_result
+          changed_when: false
+
+        - name: Check the backup succeeded
+          ansible.builtin.assert:
+            that:
+              - verify_k8up_backup_result.stdout == 'Succeeded'
+            fail_msg: "Backup finished with {{ verify_k8up_backup_result.stdout }}"
+
+        # Waits for the Schedule's Backups and their jobs to be deleted with
+        # it, so that no backup is still running once the data is deleted
+        # below: it would take a snapshot of the empty volumes.
+        - name: Stop the Schedule
+          ansible.builtin.command: >-
+            kubectl delete schedule verify-k8up -n {{ verify_k8up_namespace }}
+            --cascade=foreground --timeout=300s
+          changed_when: true
+
+        - name: Wait for the backup pods to stop
+          ansible.builtin.command: >-
+            kubectl get pods -n {{ verify_k8up_namespace }} -l k8upjob=true
+            --field-selector=status.phase!=Succeeded,status.phase!=Failed -o name
+          register: verify_k8up_jobs
+          until: verify_k8up_jobs.stdout_lines | length == 0
+          retries: 30
+          delay: 5
+          changed_when: false
+
+        - name: Install restic and rclone on the host
+          ansible.builtin.apt:
+            name: [restic, rclone]
+            state: present
+
+        - name: Create a directory for the checks on the host
+          ansible.builtin.file:
+            path: "{{ verify_k8up_host_dir }}"
+            state: directory
+            mode: "0700"
+
+        - name: Configure the remote for rclone on the host
+          ansible.builtin.template:
+            src: templates/restic-remote-rclone.conf.j2
+            dest: "{{ verify_k8up_host_dir }}/rclone.conf"
+            mode: "0600"
+
+        - name: Check the repository from the host
+          environment:
+            RESTIC_PASSWORD: "{{ verify_k8up_repository_password }}"
+            RCLONE_CONFIG: "{{ verify_k8up_host_dir }}/rclone.conf"
+          block:
+            - name: List the snapshots
+              ansible.builtin.command: >-
+                restic -r {{ verify_k8up_direct }} snapshots --host {{ verify_k8up_namespace }} --json
+              register: verify_k8up_snapshots
+              changed_when: false
+
+            - name: Check every claim and the dump were backed up
+              vars:
+                verify_k8up_paths: >-
+                  {{ verify_k8up_snapshots.stdout | from_json
+                     | map(attribute='paths') | flatten | unique | sort }}
+                verify_k8up_expected: >-
+                  {{ (verify_k8up_claims | map(attribute='name') | map('regex_replace', '^', '/data/') | list
+                      + [verify_k8up_dump_file]) | sort }}
+              ansible.builtin.assert:
+                that:
+                  - verify_k8up_paths == verify_k8up_expected
+                fail_msg: "Snapshots of {{ verify_k8up_paths }}, expected {{ verify_k8up_expected }}"
+
+            # The commands the README gives for exporting a snapshot and for
+            # restoring a dump outside the cluster.
+            - name: Export each claim and the dump as a tarball, and restore the dump
+              ansible.builtin.shell:
+                cmd: |
+                  set -euo pipefail
+                  rm -rf source export restore
+                  mkdir -p source export restore
+                  src=source/claim
+                  {{ verify_k8up_source }}
+                  seq 1 50000 > source/dump
+                  for path in {{ verify_k8up_claims | map(attribute='name') | map('regex_replace', '^', '/data/') | join(' ') }} {{ verify_k8up_dump_file }}; do
+                    restic -r {{ verify_k8up_direct }} dump --archive tar \
+                      --host {{ verify_k8up_namespace }} --path "$path" latest / | gzip > export.tar.gz
+                    tar -xzf export.tar.gz -C export
+                  done
+                  for claim in {{ verify_k8up_claims | map(attribute='name') | join(' ') }}; do
+                    diff -r source/claim "export/data/$claim"
+                  done
+                  diff source/dump export{{ verify_k8up_dump_file }}
+                  restic -r {{ verify_k8up_direct }} restore latest \
+                    --host {{ verify_k8up_namespace }} --path {{ verify_k8up_dump_file }} --target restore
+                  diff source/dump restore{{ verify_k8up_dump_file }}
+                chdir: "{{ verify_k8up_host_dir }}"
+                executable: /bin/bash
+              changed_when: true
+
+        - name: Delete the data in each claim
+          ansible.builtin.command:
+            argv: [kubectl, exec, -n, "{{ verify_k8up_namespace }}", "{{ item.name }}", --, sh, -c, rm -rf /data/*]
+          loop: "{{ verify_k8up_claims }}"
+          loop_control:
+            label: "{{ item.name }}"
+          changed_when: true
+
+        - name: Restore each claim from its latest backup
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: "{{ lookup('ansible.builtin.template', 'templates/verify-k8up-restore.yaml.j2') }}"
+          changed_when: true
+
+        - name: Wait for the restores to finish
+          ansible.builtin.command: >-
+            kubectl wait restore --all -n {{ verify_k8up_namespace }} --for=condition=Completed --timeout=600s
+          changed_when: false
+
+        - name: Compare what each claim holds with what was written to it
+          ansible.builtin.command:
+            argv:
+              - kubectl
+              - exec
+              - -n
+              - "{{ verify_k8up_namespace }}"
+              - "{{ item.name }}"
+              - --
+              - sh
+              - -ec
+              - |
+                src=/tmp/expected
+                {{ verify_k8up_source }}
+                diff -r /tmp/expected /data
+          loop: "{{ verify_k8up_claims }}"
+          loop_control:
+            label: "{{ item.name }}"
+          changed_when: false
+      always:
+        # Also deletes the claims, and with them the volumes.
+        - name: Remove the verification namespace
+          ansible.builtin.command: >-
+            kubectl delete namespace {{ verify_k8up_namespace }} --ignore-not-found --timeout=300s
+          changed_when: true

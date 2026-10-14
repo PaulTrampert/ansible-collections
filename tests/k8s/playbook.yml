@@ -113,3 +113,9 @@
       vars:
         rclone_restic_server_namespace: "{{ restic_append_only_namespace }}"
         rclone_restic_server_append_only: true
+
+- name: Install the backup operator
+  hosts: control_plane[0]
+  become: true
+  roles:
+    - ptrampert.k8s.k8up

@@ -42,3 +42,6 @@ rclone_restic_server_users:
     password: alice-test-password
   - name: bob
     password: bob-test-password
+  # verify.yml's K8up backups.
+  - name: k8up
+    password: k8up-test-password
