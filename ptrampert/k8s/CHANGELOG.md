@@ -23,3 +23,8 @@
   Service, storing restic repositories on any rclone remote. Users are required and each one
   reaches only its own repositories; append-only is an option. The rclone config seeds a copy
   on a volume, so OAuth tokens rclone refreshes survive restarts.
+- Add a `k8up` role: the K8up backup operator, from the upstream Helm chart at a pinned
+  version, for backing up volumes and the output of backup commands in annotated pods to
+  restic repositories. The role applies the chart's CRDs itself, since Helm never upgrades
+  them. It installs the operator only; backends, schedules and restores belong to the
+  workloads.

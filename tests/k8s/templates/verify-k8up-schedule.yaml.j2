@@ -1,0 +1,12 @@
+---
+# Backs up the whole namespace every minute, through the restic server's rest
+# backend. The playbook deletes it once the first backup has finished.
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: verify-k8up
+  namespace: {{ verify_k8up_namespace }}
+spec:
+  backend: {{ verify_k8up_backend | to_json }}
+  backup:
+    schedule: "* * * * *"

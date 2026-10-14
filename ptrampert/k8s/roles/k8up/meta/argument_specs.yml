@@ -1,0 +1,62 @@
+---
+argument_specs:
+  main:
+    short_description: Install the K8up backup operator.
+    description:
+      - Installs K8up, which backs up persistent volumes and the output of
+        backup commands run in annotated pods to restic repositories.
+      - The role installs the operator only. The backend, the restic password,
+        the C(Schedule), C(Backup) and C(Restore) resources, and the pod
+        annotations belong to the playbooks that deploy the workloads.
+      - Installs the upstream Helm chart at a pinned version. The chart keeps
+        its CRDs where Helm never upgrades them, so the role applies them
+        itself, server-side, before installing or upgrading the chart.
+      - Runs on a single control-plane host, which needs kubectl access to the
+        cluster and the helm binary, both of which ptrampert.k8s.control_plane
+        leaves behind. Installs the Python Kubernetes client from PyPI on that
+        host, in a venv under C(/opt/k8up).
+    options:
+      k8up_version:
+        type: str
+        # renovate: datasource=helm depName=k8up registryUrl=https://k8up-io.github.io/k8up
+        default: "4.10.0"
+        description:
+          - Version of the k8up Helm chart to install. Each chart version pins
+            the operator release it runs, and carries that release's CRDs.
+      k8up_chart_repo:
+        type: str
+        default: https://k8up-io.github.io/k8up
+        description:
+          - Chart repository the operator is installed from.
+      k8up_namespace:
+        type: str
+        default: k8up
+        description:
+          - Namespace the operator runs in. Created if it does not exist.
+      k8up_timezone:
+        type: str
+        default: ""
+        description:
+          - Time zone the operator reads C(Schedule) cron expressions in, as a
+            tz database name such as C(Europe/Zurich). Empty leaves the
+            container's own, which is UTC.
+      k8up_chart_values:
+        type: dict
+        default: {}
+        description:
+          - Extra Helm chart values, merged over the ones the role builds. For
+            example C(k8up.skipWithoutAnnotation) makes backups opt-in, so only
+            claims annotated C(k8up.io/backup=true) are backed up.
+      k8up_kubernetes_client_version:
+        type: str
+        # renovate: datasource=pypi depName=kubernetes
+        default: "36.0.3"
+        description:
+          - Version of the Python Kubernetes client, from PyPI, that the role
+            installs for C(kubernetes.core). Its major version follows the
+            Kubernetes minor version it was built against.
+      k8up_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig the role uses to talk to the cluster.

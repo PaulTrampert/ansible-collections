@@ -1,0 +1,19 @@
+{% for claim in verify_k8up_claims %}
+---
+# Restores the latest backup of the claim into it. As root, because the
+# directory the NFS driver creates for a volume belongs to root, and K8up's
+# pods otherwise run as 65532.
+apiVersion: k8up.io/v1
+kind: Restore
+metadata:
+  name: {{ claim.name }}
+  namespace: {{ verify_k8up_namespace }}
+spec:
+  backend: {{ verify_k8up_backend | to_json }}
+  paths: [/data/{{ claim.name }}]
+  podSecurityContext:
+    runAsUser: 0
+  restoreMethod:
+    folder:
+      claimName: {{ claim.name }}
+{% endfor %}

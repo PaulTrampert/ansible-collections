@@ -12,6 +12,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
 | `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
+| `ptrampert.k8s.k8up` | one control-plane node | The K8up backup operator, which backs up volumes and database dumps to restic repositories. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -124,7 +125,7 @@ Mount options default to `nfsvers=4.1` and are configurable, as is a `nfs_provis
 
 `ptrampert.k8s.rclone_restic_server` runs `rclone serve restic` in the cluster, behind a `ClusterIP` Service. It speaks restic's REST backend protocol and stores the repositories on any rclone remote: a cloud drive, SFTP, an object store. Moving the backups somewhere else is then a change to the rclone config rather than to every client.
 
-It is a storage endpoint only. What gets backed up, when, and how long it is kept belong to the restic clients, such as k8up.
+It is a storage endpoint only. What gets backed up, when, and how long it is kept belong to the restic clients, such as [K8up](#backing-up-workloads).
 
 ```yaml
 rclone_restic_server_config:
@@ -202,6 +203,161 @@ restic -r rclone:offsite:restic/app1/<repo> dump --archive tar latest / | gzip >
 
 The server runs with `--cache-objects=false`. With the cache on, it keeps serving objects it has seen after something else deletes them from the remote, such as a prune run this way.
 
+## Backing up workloads
+
+`ptrampert.k8s.k8up` installs the [K8up](https://k8up.io/) operator. K8up is built on restic: backups are deduplicated, encrypted, and pruned according to a retention policy, and they can be restored either by K8up inside the cluster or with plain `restic` from any machine. The second matters after losing the cluster, because the data can come back before the cluster does.
+
+The role installs the operator only. Where the backups go, the restic password, when backups run and how long they are kept are K8up resources, which belong to the playbooks that deploy the workloads.
+
+It installs the upstream Helm chart at the version `k8up_version` pins; each chart version pins the operator release it runs. The chart keeps its CRDs in `crds/`, which Helm installs with the first release and never upgrades, so the role applies them itself, server-side, before every install or upgrade, and tells Helm to leave them alone. Like `rclone_restic_server`, it installs the Python Kubernetes client from PyPI into a venv under `/opt/k8up` for that.
+
+Schedules are cron expressions in UTC unless `k8up_timezone` names another zone, such as `Europe/Zurich`. Anything else the chart offers goes through `k8up_chart_values`.
+
+### What gets backed up
+
+A backup of a namespace covers two kinds of data:
+
+- **Volumes.** Every bound `PersistentVolumeClaim` in the namespace. K8up mounts each one in a backup pod and reads the files. A `ReadWriteOnce` claim is backed up on the node where a pod has it mounted, so node-local volumes from `local_path_provisioner` are backed up as well as NFS ones. A claim annotated `k8up.io/backup: "false"` is skipped. To make backups opt-in instead, so that only claims annotated `k8up.io/backup: "true"` are backed up:
+
+  ```yaml
+  k8up_chart_values:
+    k8up:
+      skipWithoutAnnotation: true
+  ```
+
+- **Dumps.** A pod annotated with a backup command has that command run inside it, and its output streams straight into restic. That gives a database a consistent backup, which copying its live data directory cannot:
+
+  ```yaml
+  metadata:
+    annotations:
+      k8up.io/backupcommand: sh -c 'pg_dump -U postgres app'
+      k8up.io/file-extension: .sql
+      # The container to run it in, when it is not the pod's first.
+      k8up.io/backupcommand-container: postgres
+  ```
+
+  The command runs in one pod per owner, so a Deployment's replicas are dumped once. When the dump is what should be restored, annotate the database's own claim `k8up.io/backup: "false"` so its live files are not backed up as well.
+
+Each claim and each dump becomes a restic snapshot of its own. Its host is the namespace, and its path `/data/<claim>` for a claim or `/<namespace>-<container><extension>` for a dump, such as `/app1-postgres.sql`.
+
+K8up's backup and restore pods run as UID 65532. Files only their owner can read, such as a database's data directory, need `podSecurityContext` set on the `Schedule`'s `backup` (and on a `Restore`) to run as that owner, or as root.
+
+### Backing up to the restic server
+
+K8up's `rest` backend reaches `rclone_restic_server`. Give each namespace a user of its own on the server, then:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backup-repo
+  namespace: app1
+stringData:
+  repository-password: "{{ vault_app1_repository_password }}"
+  username: app1
+  password: "{{ vault_restic_app1_password }}"   # the user's rclone_restic_server_users password
+---
+apiVersion: k8up.io/v1
+kind: Schedule
+metadata:
+  name: backup
+  namespace: app1
+spec:
+  backend:
+    repoPasswordSecretRef:
+      name: backup-repo
+      key: repository-password
+    rest:
+      url: http://rclone-restic-server.rclone-restic-server.svc:8080/app1/k8up
+      userSecretRef:
+        name: backup-repo
+        key: username
+      # Spelled this way upstream.
+      passwordSecretReg:
+        name: backup-repo
+        key: password
+  backup:
+    schedule: "@daily-random"
+  check:
+    schedule: "@weekly-random"
+  prune:
+    schedule: "@weekly-random"
+    retention:
+      keepDaily: 7
+      keepWeekly: 4
+      keepMonthly: 6
+```
+
+The password field of the `rest` backend is spelled `passwordSecretReg` upstream. Give both it and `userSecretRef`, and leave the credentials out of `url`: K8up puts them into the URL itself. K8up creates the repository with its first backup.
+
+The repository password is the only way into the backups. Keep a copy outside the cluster, in the playbook's vault, or losing the cluster loses the backups with it.
+
+Against an append-only server, leave out `prune`, which would fail, and prune straight on the remote as [Restoring without the cluster](#restoring-without-the-cluster) shows.
+
+Any backend K8up supports works the same way (S3, B2, another REST server): the role is not tied to `rclone_restic_server`.
+
+### Restoring in the cluster
+
+K8up keeps a `Snapshot` resource for each snapshot in the namespace's repositories:
+
+```sh
+kubectl get snapshots -n app1
+```
+
+To put a claim's data back, stop the workload that uses it, so that nothing writes to the claim during the restore, then create a `Restore`:
+
+```yaml
+apiVersion: k8up.io/v1
+kind: Restore
+metadata:
+  name: restore-app-data
+  namespace: app1
+spec:
+  backend:
+    # The same as the Schedule's.
+  # The latest snapshot of the claim. `snapshot: <id>` picks another.
+  paths: [/data/app-data]
+  restoreMethod:
+    folder:
+      claimName: app-data
+  podSecurityContext:
+    runAsUser: 0
+```
+
+The snapshot's files are written into the claim, over what is there. `delete: true` also removes files the snapshot does not have. Wait for it to finish, then start the workload again:
+
+```sh
+kubectl wait restore/restore-app-data -n app1 --for=condition=Completed --timeout=1h
+```
+
+A dump goes back through the database's own restore tool, with plain `restic` as below.
+
+### Restoring with plain restic
+
+Everything K8up writes is an ordinary restic snapshot, so plain `restic` restores it from any machine, with neither K8up nor the cluster. After losing the cluster, open the repository straight on the remote as [Restoring without the cluster](#restoring-without-the-cluster) describes:
+
+```sh
+export RESTIC_REPOSITORY=rclone:offsite:restic/app1/k8up
+export RESTIC_PASSWORD=...           # the repository password
+
+restic snapshots --host app1
+
+# A claim's files, into ./restore/data/app-data
+restic restore latest --host app1 --path /data/app-data --target ./restore
+
+# A dump, straight into the database
+restic dump latest --host app1 --path /app1-postgres.sql /app1-postgres.sql | psql -U postgres app
+```
+
+To take a snapshot out of the repository as a `.tar.gz`, of a claim or of a dump:
+
+```sh
+restic dump --archive tar --host app1 --path /data/app-data latest / | gzip > app-data.tar.gz
+restic dump --archive tar --host app1 --path /app1-postgres.sql latest / | gzip > app1-postgres.tar.gz
+```
+
+The archive holds the snapshot's path: `data/app-data/...` for a claim, `app1-postgres.sql` for a dump. Give a snapshot ID in place of `--host`, `--path` and `latest` to take an older one.
+
 ## Example playbook
 
 ```yaml
@@ -233,12 +389,14 @@ The server runs with `--cache-objects=false`. With the cache on, it keeps servin
     # Needs nfs_provisioner_server and nfs_provisioner_share.
     - ptrampert.k8s.nfs_provisioner
 
-- name: Serve backup storage
+- name: Serve backup storage and back up to it
   hosts: control_plane[0]
   become: true
   roles:
     # Needs rclone_restic_server_config, _remote and _users.
     - ptrampert.k8s.rclone_restic_server
+    # Installs the operator. Schedules belong to the workloads' playbooks.
+    - ptrampert.k8s.k8up
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.

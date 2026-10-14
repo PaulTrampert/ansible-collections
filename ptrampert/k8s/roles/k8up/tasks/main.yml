@@ -1,0 +1,71 @@
+---
+# kubernetes.core.k8s runs on this host and needs the Python client. The
+# distribution's package is older than kubernetes.core supports, so the client
+# comes from PyPI, into a venv of its own.
+- name: Install venv support
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Install the Python Kubernetes client
+  ansible.builtin.pip:
+    name: kubernetes=={{ k8up_kubernetes_client_version }}
+    virtualenv: "{{ k8up_venv }}"
+    virtualenv_command: python3 -m venv
+
+- name: Install the operator
+  vars:
+    ansible_python_interpreter: "{{ k8up_venv }}/bin/python"
+  block:
+    - name: Create the chart directory
+      ansible.builtin.file:
+        path: "{{ k8up_chart_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download the chart
+      kubernetes.core.helm_pull:
+        chart_ref: "{{ k8up_chart }}"
+        repo_url: "{{ k8up_chart_repo }}"
+        chart_version: "{{ k8up_version }}"
+        destination: "{{ k8up_chart_dir }}"
+        untar_chart: true
+
+    # The chart keeps its CRDs in crds/, which Helm installs with the first
+    # release and never touches again, so a chart upgrade would run the new
+    # operator against the old CRDs. The role applies them on every run
+    # instead, and Helm is told to leave them alone.
+    - name: Find the CRDs
+      ansible.builtin.find:
+        paths: "{{ k8up_chart_dir }}/{{ k8up_chart }}/crds"
+        patterns: "*.yaml"
+      register: k8up_crds
+
+    # Server-side, because the largest CRDs are too big for the annotation a
+    # client-side apply keeps its last state in. Forcing conflicts takes over
+    # fields a previous Helm install left owned by Helm.
+    - name: Apply the CRDs
+      kubernetes.core.k8s:
+        kubeconfig: "{{ k8up_kubeconfig }}"
+        src: "{{ item.path }}"
+        apply: true
+        server_side_apply:
+          field_manager: "{{ k8up_field_manager }}"
+          force_conflicts: true
+      loop: "{{ k8up_crds.files | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Install K8up
+      kubernetes.core.helm:
+        name: "{{ k8up_release }}"
+        chart_ref: "{{ k8up_chart_dir }}/{{ k8up_chart }}"
+        release_namespace: "{{ k8up_namespace }}"
+        create_namespace: true
+        kubeconfig: "{{ k8up_kubeconfig }}"
+        skip_crds: true
+        values: >-
+          {{ k8up_values | combine(k8up_chart_values, recursive=True) }}
+        wait: true

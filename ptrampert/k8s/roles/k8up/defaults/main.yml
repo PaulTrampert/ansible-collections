@@ -1,0 +1,27 @@
+---
+# K8up Helm chart version. Each chart release pins the operator release it
+# runs, and carries that release's CRDs.
+# renovate: datasource=helm depName=k8up registryUrl=https://k8up-io.github.io/k8up
+k8up_version: "4.10.0"
+
+# Where the chart comes from.
+k8up_chart_repo: https://k8up-io.github.io/k8up
+
+# Namespace the operator runs in. Created if it does not exist.
+k8up_namespace: k8up
+
+# Time zone the operator reads Schedule cron expressions in, as a tz database
+# name such as Europe/Zurich. Empty leaves the container's own, which is UTC.
+k8up_timezone: ""
+
+# Extra Helm chart values, merged over the ones the role builds.
+k8up_chart_values: {}
+
+# Version of the Python Kubernetes client the role installs for
+# kubernetes.core, from PyPI. Its major version follows the Kubernetes minor
+# version it was built against.
+# renovate: datasource=pypi depName=kubernetes
+k8up_kubernetes_client_version: "36.0.3"
+
+# Admin kubeconfig used to talk to the cluster.
+k8up_kubeconfig: /etc/kubernetes/admin.conf
