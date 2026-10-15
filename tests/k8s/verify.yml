@@ -783,3 +783,103 @@
           ansible.builtin.command: >-
             kubectl delete namespace {{ verify_k8up_namespace }} --ignore-not-found --timeout=300s
           changed_when: true
+
+- name: Verify cert-manager
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_cert_manager_namespace: verify-cert-manager
+  tasks:
+    - name: Read the real DNS provider, if there is one
+      ansible.builtin.include_vars:
+        file: "{{ item }}"
+      with_first_found:
+        - files: [cert-manager-dns.yml]
+          skip: true
+
+    - name: Wait for cert-manager's deployments
+      ansible.builtin.command: >-
+        kubectl rollout status deployment/{{ item }} -n {{ cert_manager_namespace | default('cert-manager') }} --timeout=300s
+      loop: [cert-manager, cert-manager-webhook, cert-manager-cainjector]
+      changed_when: false
+
+    - name: Check cert-manager's CRDs are established
+      ansible.builtin.command: >-
+        kubectl wait crd --for=condition=Established --timeout=60s
+        certificates.cert-manager.io certificaterequests.cert-manager.io
+        issuers.cert-manager.io clusterissuers.cert-manager.io
+        orders.acme.cert-manager.io challenges.acme.cert-manager.io
+      changed_when: false
+
+    # Each has registered an ACME account with its directory.
+    - name: Check both issuers are Ready
+      ansible.builtin.command: >-
+        kubectl wait clusterissuer/{{ item }} --for=condition=Ready --timeout=60s
+      loop: [letsencrypt-staging, letsencrypt-production]
+      changed_when: false
+
+    - name: Skip issuance without a real DNS provider
+      ansible.builtin.debug:
+        msg: >-
+          No cert-manager-dns.yml, so no certificate is issued. See README.md
+          to check issuance against the staging directory.
+      when: verify_cert_manager_domain is not defined
+
+    # A wildcard, as the ingress uses, from the staging directory so as not to
+    # spend production's rate limits.
+    - name: Issue a certificate from the staging directory
+      when: verify_cert_manager_domain is defined
+      block:
+        - name: Request the certificate
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: |
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: {{ verify_cert_manager_namespace }}
+              ---
+              apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: verify-wildcard
+                namespace: {{ verify_cert_manager_namespace }}
+              spec:
+                secretName: verify-wildcard-tls
+                dnsNames: ["*.{{ verify_cert_manager_domain }}"]
+                issuerRef:
+                  kind: ClusterIssuer
+                  name: letsencrypt-staging
+          changed_when: true
+
+        # DNS-01 waits for the TXT record to propagate, which can take minutes.
+        - name: Wait for the certificate
+          ansible.builtin.command: >-
+            kubectl wait certificate/verify-wildcard -n {{ verify_cert_manager_namespace }}
+            --for=condition=Ready --timeout=600s
+          changed_when: false
+
+        - name: Read the certificate's Secret
+          ansible.builtin.command: >-
+            kubectl get secret verify-wildcard-tls -n {{ verify_cert_manager_namespace }} -o json
+          register: verify_cert_manager_secret
+          changed_when: false
+
+        - name: Check the Secret holds a certificate for the wildcard
+          vars:
+            verify_cert_manager_tls: "{{ verify_cert_manager_secret.stdout | from_json }}"
+          ansible.builtin.assert:
+            that:
+              - verify_cert_manager_tls.type == 'kubernetes.io/tls'
+              - verify_cert_manager_tls.data['tls.crt'] | default('') | length > 0
+              - verify_cert_manager_tls.data['tls.key'] | default('') | length > 0
+              - >-
+                verify_cert_manager_tls.metadata.annotations['cert-manager.io/alt-names']
+                == '*.' ~ verify_cert_manager_domain
+      always:
+        - name: Remove the verification namespace
+          ansible.builtin.command: >-
+            kubectl delete namespace {{ verify_cert_manager_namespace }} --ignore-not-found --timeout=300s
+          changed_when: true

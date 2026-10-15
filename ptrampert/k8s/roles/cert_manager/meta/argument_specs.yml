@@ -1,0 +1,71 @@
+---
+argument_specs:
+  main:
+    short_description: Install cert-manager with Let's Encrypt issuers.
+    description:
+      - Installs cert-manager, and two C(ClusterIssuer)s that issue
+        certificates from Let's Encrypt over ACME with a DNS-01 solver,
+        C(letsencrypt-staging) and C(letsencrypt-production). Any namespace
+        can request certificates from either.
+      - The staging directory has generous rate limits and issues untrusted
+        certificates; use it until issuance works, then switch to production.
+      - The role creates no C(Certificate)s. They belong to whatever uses them,
+        in the namespace the certificate's Secret is meant for.
+      - Installs the upstream Helm chart at a pinned version, CRDs included.
+      - Runs on a single control-plane host, which needs kubectl access to the
+        cluster and the helm binary, both of which ptrampert.k8s.control_plane
+        leaves behind. Installs the Python Kubernetes client from PyPI on that
+        host, in a venv under C(/opt/cert-manager).
+    options:
+      cert_manager_dns01:
+        type: dict
+        required: true
+        description:
+          - The DNS-01 solver both issuers use, exactly as the C(dns01) field
+            of a cert-manager ACME solver takes it. Any provider built into
+            cert-manager works. Providers it reaches only through an external
+            webhook need that webhook installed first, which the role does not
+            do.
+          - Refer to the credential as the Secret C(cert-manager-dns01), with
+            the keys given in O(cert_manager_dns01_credential).
+      cert_manager_dns01_credential:
+        type: dict
+        required: true
+        description:
+          - The DNS provider credential, as the key/value pairs of the Secret
+            C(cert-manager-dns01) that O(cert_manager_dns01) refers to. The
+            role stores it in O(cert_manager_namespace) and never writes it to
+            the host.
+          - Give the credential no more than edit rights on the DNS records of
+            the zones it issues for.
+      cert_manager_version:
+        type: str
+        # renovate: datasource=helm depName=cert-manager registryUrl=https://charts.jetstack.io
+        default: "v1.21.2"
+        description:
+          - Version of the cert-manager Helm chart to install. Chart and
+            application are released together under the same version.
+      cert_manager_chart_repo:
+        type: str
+        default: https://charts.jetstack.io
+        description:
+          - Chart repository cert-manager is installed from.
+      cert_manager_namespace:
+        type: str
+        default: cert-manager
+        description:
+          - Namespace cert-manager runs in. The DNS credential and the issuers'
+            ACME account keys are kept here. Created if it does not exist.
+      cert_manager_kubernetes_client_version:
+        type: str
+        # renovate: datasource=pypi depName=kubernetes
+        default: "36.0.3"
+        description:
+          - Version of the Python Kubernetes client, from PyPI, that the role
+            installs for C(kubernetes.core). Its major version follows the
+            Kubernetes minor version it was built against.
+      cert_manager_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig the role uses to talk to the cluster.

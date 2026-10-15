@@ -119,3 +119,16 @@
   become: true
   roles:
     - ptrampert.k8s.k8up
+
+- name: Install cert-manager
+  hosts: control_plane[0]
+  become: true
+  pre_tasks:
+    - name: Read the real DNS provider, if there is one
+      ansible.builtin.include_vars:
+        file: "{{ item }}"
+      with_first_found:
+        - files: [cert-manager-dns.yml]
+          skip: true
+  roles:
+    - ptrampert.k8s.cert_manager

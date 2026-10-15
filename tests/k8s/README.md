@@ -47,6 +47,8 @@ Then the restic REST server, with restic in throwaway pods against its Service: 
 
 Last, K8up: that the operator is running and that the role, not Helm, applied its CRDs. Then, in a throwaway namespace, a pod filling a node-local claim, one filling an NFS claim on `multi`, and a stand-in database whose backup command is in its annotations. A `Schedule` backs the namespace up through the restic server's `rest` backend, as the `k8up` user, and is deleted once its first backup has succeeded. On the host, plain `restic` straight on the remote checks there is a snapshot of every claim and of the dump, that `restic dump --archive tar` of each matches the source, and that `restic restore` gives back the dump. Then it deletes the data in the claims, restores each with a `Restore`, and checks the claims hold what was written to them. It deletes the namespace afterwards and the repository at the start, so it can be run again.
 
+Then cert-manager: that its deployments are rolled out, its CRDs established, and both `ClusterIssuer`s Ready, which means each has registered an ACME account with its Let's Encrypt directory. With a real DNS provider in `cert-manager-dns.yml` (below), it also requests a wildcard certificate from the staging issuer in a throwaway namespace, waits for it to be issued, and checks its Secret is a `kubernetes.io/tls` Secret for that wildcard. Without one, it says so and skips that part.
+
 `failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
 
 ```sh
@@ -67,6 +69,30 @@ provisioner are skipped there.
 ## The restic server's remote
 
 `playbook.yml` creates a `restic-store` user on the first control-plane node, and both instances of `ptrampert.k8s.rclone_restic_server` store the repositories there over SFTP, under `/srv/restic-store/repos`. The second instance, in the `rclone-restic-append-only` namespace, serves the same repositories append-only. The `k8up` user holds the repository `verify.yml` backs up to with K8up. The credentials and the users' bcrypt hashes in `inventory/group_vars/all.yml` are test values for throwaway VMs.
+
+## Issuing a real certificate
+
+The VMs have no public domain, so by default `inventory/group_vars/all.yml` gives cert-manager a solver that is never used: an RFC 2136 server at a documentation address. The issuers become Ready without it, because registering an ACME account needs no DNS.
+
+To check issuance end to end, create `cert-manager-dns.yml` next to `playbook.yml`. It is gitignored, since it holds a real credential. Both `playbook.yml` and `verify.yml` read it when it exists, and its values override the placeholder:
+
+```yaml
+# A domain the credential can create TXT records in. verify.yml requests *.<domain>.
+verify_cert_manager_domain: example.com
+# The solver and credential, as ptrampert.k8s.cert_manager takes them.
+cert_manager_dns01:
+  rfc2136:
+    nameserver: 192.0.2.53
+    tsigKeyName: acme.example.com.
+    tsigAlgorithm: HMACSHA256
+    tsigSecretSecretRef:
+      name: cert-manager-dns01
+      key: tsig-secret
+cert_manager_dns01_credential:
+  tsig-secret: <base64 TSIG secret>
+```
+
+Then converge and run `verify.yml` as usual. The certificate comes from the staging directory, so it costs nothing against production's rate limits. Like every certificate, it is published in Certificate Transparency logs.
 
 ## Adding a control-plane node
 

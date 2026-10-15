@@ -1,0 +1,53 @@
+---
+# kubernetes.core.k8s runs on this host and needs the Python client. The
+# distribution's package is older than kubernetes.core supports, so the client
+# comes from PyPI, into a venv of its own.
+- name: Install venv support
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Install the Python Kubernetes client
+  ansible.builtin.pip:
+    name: kubernetes=={{ cert_manager_kubernetes_client_version }}
+    virtualenv: "{{ cert_manager_venv }}"
+    virtualenv_command: python3 -m venv
+
+- name: Install cert-manager and its issuers
+  vars:
+    ansible_python_interpreter: "{{ cert_manager_venv }}/bin/python"
+  block:
+    # The chart's startupapicheck hook waits until the webhook accepts
+    # requests, so the issuers below can be created as soon as this returns.
+    - name: Install cert-manager
+      kubernetes.core.helm:
+        name: "{{ cert_manager_release }}"
+        chart_ref: "{{ cert_manager_chart }}"
+        chart_repo_url: "{{ cert_manager_chart_repo }}"
+        chart_version: "{{ cert_manager_version }}"
+        release_namespace: "{{ cert_manager_namespace }}"
+        create_namespace: true
+        kubeconfig: "{{ cert_manager_kubeconfig }}"
+        values: "{{ cert_manager_values }}"
+        wait: true
+
+    - name: Store the DNS provider credential
+      kubernetes.core.k8s:
+        kubeconfig: "{{ cert_manager_kubeconfig }}"
+        template: dns01-secret.yaml.j2
+      no_log: true
+
+    # Ready once cert-manager has registered an ACME account with the
+    # directory, which needs outbound access to Let's Encrypt but no DNS.
+    - name: Create the issuers
+      kubernetes.core.k8s:
+        kubeconfig: "{{ cert_manager_kubeconfig }}"
+        template: cluster-issuer.yaml.j2
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 300
+      loop: "{{ cert_manager_issuers }}"
+      loop_control:
+        label: "{{ item.name }}"

@@ -1,0 +1,21 @@
+---
+# cert-manager Helm chart version. Chart and application are released together
+# under the same version.
+# renovate: datasource=helm depName=cert-manager registryUrl=https://charts.jetstack.io
+cert_manager_version: "v1.21.2"
+
+# Where the chart comes from.
+cert_manager_chart_repo: https://charts.jetstack.io
+
+# Namespace cert-manager runs in, and where the issuers keep the DNS
+# credential and their ACME account keys. Created if it does not exist.
+cert_manager_namespace: cert-manager
+
+# Version of the Python Kubernetes client the role installs for
+# kubernetes.core, from PyPI. Its major version follows the Kubernetes minor
+# version it was built against.
+# renovate: datasource=pypi depName=kubernetes
+cert_manager_kubernetes_client_version: "36.0.3"
+
+# Admin kubeconfig used to talk to the cluster.
+cert_manager_kubeconfig: /etc/kubernetes/admin.conf

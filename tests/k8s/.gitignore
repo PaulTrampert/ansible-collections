@@ -1,0 +1,2 @@
+# A real DNS provider credential, for verify.yml's issuance check.
+cert-manager-dns.yml
