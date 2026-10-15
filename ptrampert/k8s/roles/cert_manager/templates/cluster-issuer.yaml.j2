@@ -1,0 +1,14 @@
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ item.name }}
+spec:
+  acme:
+    server: {{ item.server }}
+    # The ACME account's private key, in cert_manager_namespace. cert-manager
+    # registers the account and creates it on first use.
+    privateKeySecretRef:
+      name: {{ item.name }}-account
+    solvers:
+      - dns01: {{ cert_manager_dns01 | to_json }}

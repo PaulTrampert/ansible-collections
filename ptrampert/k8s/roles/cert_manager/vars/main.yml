@@ -1,0 +1,25 @@
+---
+cert_manager_release: cert-manager
+cert_manager_chart: cert-manager
+
+# Holds the Python Kubernetes client kubernetes.core runs with.
+cert_manager_venv: /opt/cert-manager/venv
+
+# The Secret holding cert_manager_dns01_credential, in cert_manager_namespace.
+# cert_manager_dns01 refers to it by this name.
+cert_manager_dns01_secret: cert-manager-dns01
+
+# One ClusterIssuer per Let's Encrypt directory, both with the same solver.
+cert_manager_issuers:
+  - name: letsencrypt-staging
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+  - name: letsencrypt-production
+    server: https://acme-v02.api.letsencrypt.org/directory
+
+cert_manager_values:
+  # The chart keeps its CRDs among its templates, so Helm upgrades them with
+  # the chart. Uninstalling the release leaves them, and with them every
+  # Certificate in the cluster, in place.
+  crds:
+    enabled: true
+    keep: true

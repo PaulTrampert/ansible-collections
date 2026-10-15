@@ -45,3 +45,17 @@ rclone_restic_server_users:
   # verify.yml's K8up backups.
   - name: k8up
     password: k8up-test-password
+
+# A solver that is never exercised: the issuers become Ready by registering an
+# ACME account, which needs no DNS. cert-manager-dns.yml, when present,
+# replaces both with a real provider and turns on verify.yml's issuance check.
+cert_manager_dns01:
+  rfc2136:
+    nameserver: 192.0.2.53
+    tsigKeyName: verify.example.com.
+    tsigAlgorithm: HMACSHA256
+    tsigSecretSecretRef:
+      name: cert-manager-dns01
+      key: tsig-secret
+cert_manager_dns01_credential:
+  tsig-secret: dmVyaWZ5LXRzaWctc2VjcmV0

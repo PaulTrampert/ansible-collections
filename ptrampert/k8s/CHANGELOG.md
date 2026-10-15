@@ -28,3 +28,8 @@
   restic repositories. The role applies the chart's CRDs itself, since Helm never upgrades
   them. It installs the operator only; backends, schedules and restores belong to the
   workloads.
+- Add a `cert_manager` role: cert-manager from the upstream Helm chart at a pinned version, with
+  `ClusterIssuer`s for Let's Encrypt's staging and production directories. Both solve DNS-01
+  through the solver given in `cert_manager_dns01`, which takes any provider built into
+  cert-manager, with the credential in `cert_manager_dns01_credential`. The role creates no
+  certificates; they belong to whatever uses them.

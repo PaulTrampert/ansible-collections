@@ -13,6 +13,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
 | `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
 | `ptrampert.k8s.k8up` | one control-plane node | The K8up backup operator, which backs up volumes and database dumps to restic repositories. |
+| `ptrampert.k8s.cert_manager` | one control-plane node | cert-manager, with `ClusterIssuer`s for Let's Encrypt's staging and production directories that solve DNS-01 through any provider cert-manager supports. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -358,6 +359,86 @@ restic dump --archive tar --host app1 --path /app1-postgres.sql latest / | gzip 
 
 The archive holds the snapshot's path: `data/app-data/...` for a claim, `app1-postgres.sql` for a dump. Give a snapshot ID in place of `--host`, `--path` and `latest` to take an older one.
 
+## Certificates
+
+`ptrampert.k8s.cert_manager` installs [cert-manager](https://cert-manager.io/), and two
+`ClusterIssuer`s that issue publicly trusted certificates from Let's Encrypt over ACME:
+
+| Issuer | Directory |
+|---|---|
+| `letsencrypt-staging` | Generous rate limits, untrusted certificates. Use it until issuance works. |
+| `letsencrypt-production` | Trusted certificates, and Let's Encrypt's rate limits, including 5 duplicate certificates a week. |
+
+cert-manager issues each certificate once, from one leader-elected controller, and stores it in a
+Kubernetes Secret that any number of readers can use. That is what lets an ingress run several
+replicas without each of them running its own ACME client and requesting the same certificate.
+
+It installs the upstream Helm chart at the version `cert_manager_version` pins. The chart carries
+the CRDs among its templates, so Helm upgrades them with the chart, and leaves them in place if the
+release is uninstalled. Like `k8up`, the role installs the Python Kubernetes client from PyPI into a
+venv under `/opt/cert-manager`.
+
+### DNS-01
+
+Both issuers prove control of a domain with DNS-01: cert-manager publishes a TXT record through the
+DNS provider's API, and Let's Encrypt looks it up. Nothing has to reach the cluster from the
+internet, and it is the only challenge that can issue wildcard certificates. HTTP-01 is not
+offered.
+
+`cert_manager_dns01` is the solver itself, exactly as cert-manager's `dns01` field takes it, so
+every provider built into cert-manager works without anything from the role. Its credential goes in
+`cert_manager_dns01_credential`, which the role stores as the Secret `cert-manager-dns01` in
+`cert_manager_namespace`. The solver refers to it by that name. For example, with RFC 2136 dynamic
+updates:
+
+```yaml
+cert_manager_dns01:
+  rfc2136:
+    nameserver: 192.0.2.53
+    tsigKeyName: acme.example.com.
+    tsigAlgorithm: HMACSHA256
+    tsigSecretSecretRef:
+      name: cert-manager-dns01
+      key: tsig-secret
+cert_manager_dns01_credential:
+  tsig-secret: "{{ vault_acme_tsig_secret }}"
+```
+
+Providers that cert-manager reaches only through an external webhook need that webhook's own chart
+installed first. The role does not install it.
+
+The credential is the thing to protect. Anyone who can read it can get a certificate for any name
+in the zone, so give it no more than edit rights on the zone's DNS records. It is kept in
+`cert_manager_namespace`, and the role writes it there through the API server, never to a file on
+the host. Like every Secret, it is stored unencrypted in etcd unless the cluster enables
+encryption at rest.
+
+### Requesting a certificate
+
+The role creates no certificates. A `Certificate` belongs to whatever uses it, in the namespace its
+Secret is meant for:
+
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard
+  namespace: ingress
+spec:
+  secretName: wildcard-tls
+  dnsNames: ["*.example.com"]
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-production
+```
+
+The issuers are cluster-wide, so a `Certificate` in any namespace can use them, and the DNS
+credential stays in one namespace. That suits a cluster running workloads at one level of trust.
+
+Every certificate is published in public Certificate Transparency logs, permanently. A certificate
+per host lists every host name, so one wildcard per domain level gives away less about what the
+cluster runs.
+
 ## Example playbook
 
 ```yaml
@@ -397,6 +478,13 @@ The archive holds the snapshot's path: `data/app-data/...` for a claim, `app1-po
     - ptrampert.k8s.rclone_restic_server
     # Installs the operator. Schedules belong to the workloads' playbooks.
     - ptrampert.k8s.k8up
+
+- name: Issue certificates
+  hosts: control_plane[0]
+  become: true
+  roles:
+    # Needs cert_manager_dns01 and cert_manager_dns01_credential.
+    - ptrampert.k8s.cert_manager
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.
