@@ -110,6 +110,14 @@
       delegate_to: "{{ worker_upgrade_host }}"
       when: not (worker_upgrade_packages['kubelet'] and worker_upgrade_packages['kubectl'])
 
+    # Installing a held package with allow_change_held_packages lifts the hold.
+    - name: Hold the Kubernetes packages again on {{ worker_upgrade_host }}
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubeadm, kubelet, kubectl]
+      delegate_to: "{{ worker_upgrade_host }}"
+
     # Inline rather than a handler: the kubelet has to be running the new
     # version before the node is uncordoned, within this node's turn.
     - name: Restart the kubelet on {{ worker_upgrade_host }}
