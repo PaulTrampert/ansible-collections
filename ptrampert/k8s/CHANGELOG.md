@@ -52,3 +52,6 @@
   existing node. Upgrades go one minor version at a time, an interrupted one resumes, and
   nodes are cordoned rather than drained unless `control_plane_drain_on_upgrade` or
   `worker_drain_on_upgrade` is set.
+- Renovate tracks `node_kubernetes_version`, one minor version at a time, and
+  `node_containerd_series`, so their defaults now move with upstream releases like the other
+  pins.
