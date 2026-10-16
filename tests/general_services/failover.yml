@@ -80,3 +80,114 @@
       delay: 3
       changed_when: false
       when: inventory_hostname == failover_from
+
+# The second keepalived application fails over on its own: stopping the backend
+# on the host holding the backend VIP moves that VIP, and leaves the web VIP
+# where it was, since that host's HAProxy is still running.
+- name: Stop the backend on the host holding the backend VIP
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Find the host holding the web VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Note which host holds the web VIP
+      ansible.builtin.set_fact:
+        failover_web_holder: "{{ lb_vip_holders }}"
+
+    - name: Find the host holding the backend VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+      vars:
+        lb_vip: "{{ lb_backend_vip }}"
+
+    - name: Check that exactly one host holds the backend VIP to begin with
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+        fail_msg: "Expected exactly one host to hold {{ lb_backend_vip }}, got {{ lb_vip_holders }}"
+
+    - name: Note which host to fail
+      ansible.builtin.set_fact:
+        failover_from: "{{ lb_vip_holders[0] }}"
+
+    - name: Stop the backend on {{ lb_vip_holders[0] }}
+      ansible.builtin.systemd_service:
+        name: lb-test-backend
+        state: stopped
+      when: inventory_hostname == failover_from
+
+- name: Wait for the backend VIP to move
+  hosts: load_balancers
+  become: true
+  gather_facts: false
+  tasks:
+    # The backends bind only their own address, so nothing answers on the
+    # backend VIP to wait for; watch the failed host give it up instead.
+    - name: Wait for the failed host to give up the backend VIP
+      ansible.builtin.command: ip -json -4 address show dev {{ lb_interface }}
+      register: failover_addresses
+      until: >-
+        lb_backend_vip not in (failover_addresses.stdout | from_json
+                               | map(attribute='addr_info') | flatten | map(attribute='local'))
+      retries: 20
+      delay: 3
+      changed_when: false
+      when: inventory_hostname == failover_from
+
+    - name: Wait for another host to take the backend VIP
+      ansible.builtin.command: ip -json -4 address show dev {{ lb_interface }}
+      register: failover_addresses
+      until: >-
+        lb_backend_vip in (failover_addresses.stdout | from_json
+                           | map(attribute='addr_info') | flatten | map(attribute='local'))
+      retries: 20
+      delay: 3
+      changed_when: false
+      # With two hosts, the other one is the only place it can go.
+      when: inventory_hostname != failover_from
+
+- name: Give the backend VIP back
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Find the host holding the backend VIP now
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+      vars:
+        lb_vip: "{{ lb_backend_vip }}"
+
+    - name: Check that the backend VIP moved to another host
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+          - lb_vip_holders[0] != failover_from
+        fail_msg: >-
+          Expected {{ lb_backend_vip }} to move off {{ failover_from }},
+          held by {{ lb_vip_holders }}
+
+    - name: Find the host holding the web VIP now
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+
+    - name: Check that the web VIP stayed where it was
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders == failover_web_holder
+        fail_msg: >-
+          Expected {{ lb_vip }} to stay on {{ failover_web_holder }},
+          held by {{ lb_vip_holders }}
+
+    - name: Start the backend again on {{ failover_from }}
+      ansible.builtin.systemd_service:
+        name: lb-test-backend
+        state: started
+      when: inventory_hostname == failover_from
+
+    - name: Wait for the backend VIP to return to {{ failover_from }}
+      ansible.builtin.command: ip -json -4 address show dev {{ lb_interface }}
+      register: failover_addresses
+      until: >-
+        lb_backend_vip in (failover_addresses.stdout | from_json
+                           | map(attribute='addr_info') | flatten | map(attribute='local'))
+      retries: 20
+      delay: 3
+      changed_when: false
+      when: inventory_hostname == failover_from

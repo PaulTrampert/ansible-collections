@@ -19,6 +19,11 @@ load_balancers:
     lb_frontend_port: 80
     lb_backend_port: 8080
 
+    # A second VIP, floated by a second application of keepalived on the same
+    # hosts, straight onto the backends. It shows that two services' VRRP
+    # instances can live side by side, each failing over on its own.
+    lb_backend_vip: 192.168.56.31
+
     # Every VM runs a backend, so the server list follows the inventory group
     # rather than repeating the addresses from the Vagrantfile.
     lb_backend:

@@ -11,8 +11,28 @@ argument_specs:
       - VRRP uses IP protocol 112, and must be allowed between the hosts taking
         part. Where multicast is not carried, use unicast_src_ip and
         unicast_peers.
+      - Can be applied more than once to the same host, for different
+        services, each with its own keepalived_config_name. Each name keeps its
+        own instances and scripts, and the role assembles every name's into
+        one configuration. The global settings (keepalived_router_id,
+        keepalived_script_user, keepalived_script_security,
+        keepalived_global_extra) are shared, so give them the same values every
+        time.
       - Supports Ubuntu only.
     options:
+      keepalived_config_name:
+        type: str
+        default: default
+        description:
+          - Names this application of the role. Applying the role again with
+            the same name replaces that name's instances and scripts; another
+            name's are left in place. Use letters, digits, and hyphens.
+          - Instance names, virtual router IDs, and script names must still be
+            unique across every name on the host.
+          - A name the role stops being applied with keeps its part of the
+            configuration. To drop it, remove
+            C(/etc/keepalived/fragments.d/10-<name>.conf) and apply the role
+            again under any name.
       keepalived_vrrp_instances:
         type: list
         elements: dict

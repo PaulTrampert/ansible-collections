@@ -1,2 +1,7 @@
 ---
 keepalived_config_file: /etc/keepalived/keepalived.conf
+
+# Each application of the role writes its part of the configuration here, and
+# the parts are assembled into keepalived_config_file. keepalived does not read
+# this directory itself.
+keepalived_fragment_dir: /etc/keepalived/fragments.d

@@ -1,16 +1,5 @@
-# {{ ansible_managed }}
-global_defs {
-  router_id {{ keepalived_router_id }}
-{% if keepalived_script_user %}
-  script_user {{ keepalived_script_user }}
-{% endif %}
-{% if keepalived_script_security %}
-  enable_script_security
-{% endif %}
-{% for line in keepalived_global_extra %}
-  {{ line }}
-{% endfor %}
-}
+
+# Configuration "{{ keepalived_config_name }}"
 {% for name, script in keepalived_scripts.items() %}
 
 vrrp_script {{ name }} {

@@ -12,6 +12,17 @@
           - lb_vip_holders | length == 1
         fail_msg: "Expected exactly one host to hold {{ lb_vip }}, got {{ lb_vip_holders }}"
 
+    - name: Find the host holding the backend VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+      vars:
+        lb_vip: "{{ lb_backend_vip }}"
+
+    - name: Check that exactly one host holds the backend VIP
+      ansible.builtin.assert:
+        that:
+          - lb_vip_holders | length == 1
+        fail_msg: "Expected exactly one host to hold {{ lb_backend_vip }}, got {{ lb_vip_holders }}"
+
 - name: Verify the VIP balances across the backends
   hosts: load_balancers[0]
   gather_facts: false
@@ -33,3 +44,12 @@
         fail_msg: >-
           Expected {{ lb_vip }} to balance across {{ groups['load_balancers'] | sort }},
           served by {{ verify_served_by }}
+
+    # The backends bind only their own address, so the backend VIP is checked
+    # through SSH, which listens on every address.
+    - name: Check that the backend VIP answers
+      ansible.builtin.wait_for:
+        host: "{{ lb_backend_vip }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost

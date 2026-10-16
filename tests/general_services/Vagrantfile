@@ -1,5 +1,6 @@
 # Test VMs for ptrampert.general_services: two load balancers that share a
-# floating VIP (192.168.56.30, see inventory/lb.yml).
+# floating VIP (192.168.56.30, see inventory/lb.yml), and a second VIP
+# (192.168.56.31) from a second application of keepalived.
 
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-24.04"

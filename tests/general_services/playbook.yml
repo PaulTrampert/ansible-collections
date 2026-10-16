@@ -61,3 +61,30 @@
   roles:
     - ptrampert.general_services.haproxy
     - ptrampert.general_services.keepalived
+
+# Applied a second time under a name of its own, so the web VIP above keeps its
+# instance. The vars here take precedence over the inventory's keepalived_*
+# settings, which belong to the first application.
+- name: Float an address over the backends
+  hosts: load_balancers
+  become: true
+  tasks:
+    - name: Float the backend address
+      ansible.builtin.include_role:
+        name: ptrampert.general_services.keepalived
+      vars:
+        keepalived_config_name: backend
+        keepalived_scripts:
+          chk_backend:
+            command: "/bin/bash -c '</dev/tcp/{{ ansible_host }}/{{ lb_backend_port }}'"
+            interval: 2
+            fall: 2
+            rise: 2
+        keepalived_vrrp_instances:
+          - name: backend
+            interface: "{{ lb_interface }}"
+            state: BACKUP
+            virtual_router_id: 61
+            priority: "{{ keepalived_lb_priority }}"
+            virtual_ipaddresses: ["{{ lb_backend_vip }}/24"]
+            track_scripts: [chk_backend]
