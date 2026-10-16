@@ -37,8 +37,9 @@
   when: ingress_failover_mode == 'keepalived' and inventory_hostname == ingress_failover_from
 
 # Only a node whose Traefik serves takes the VIP, so this succeeding means it
-# has moved somewhere that works.
-- name: Wait for the route to serve on the VIP again
+# has moved somewhere that works. curl for --resolve, which uri has no
+# equivalent of.
+- name: Wait for the route to serve on the VIP again  # noqa: command-instead-of-module
   ansible.builtin.command: >-
     curl --silent --insecure --max-time 5
     --resolve whoami.example.com:443:{{ traefik_ingress_node_vip }} https://whoami.example.com/

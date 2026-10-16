@@ -1111,7 +1111,8 @@
               - verify_ingress_fingerprints | length == traefik_ingress_node_certificates | length
             fail_msg: "Served {{ verify_ingress_fingerprints }}"
 
-        - name: Request a name over plain HTTP
+        # curl for --resolve, which uri has no equivalent of.
+        - name: Request a name over plain HTTP  # noqa: command-instead-of-module
           ansible.builtin.command: >-
             curl --silent --max-time 10 --output /dev/null --write-out '%{http_code} %{redirect_url}'
             --resolve whoami.example.com:80:{{ verify_ingress_endpoint }} http://whoami.example.com/some/path
