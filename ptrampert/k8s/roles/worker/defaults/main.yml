@@ -1,3 +1,9 @@
 ---
 # Control-plane host that issues join tokens and is used to check node status.
 worker_control_plane_host: "{{ groups['control_plane'][0] }}"
+
+# Drain each worker before upgrading its kubelet. Off, a worker is only
+# cordoned: restarting the kubelet leaves its running containers alone, and
+# draining a node whose pods have nowhere else to go stops them until it is
+# uncordoned.
+worker_drain_on_upgrade: false

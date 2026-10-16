@@ -5,6 +5,12 @@ argument_specs:
     description:
       - Runs kubeadm join with a short-lived token issued by the control plane,
         then waits for the node to become Ready.
+      - Upgrades workers that have joined to the Kubernetes version and
+        containerd series ptrampert.k8s.node recorded on them, one at a time.
+        Each runs kubeadm upgrade node, is cordoned, gets containerd, kubelet
+        and kubectl, has its kubelet restarted, and is uncordoned. The control plane has to be at that version
+        already, which ptrampert.k8s.control_plane sees to. A run that stopped
+        part way resumes where it left off.
       - Requires ptrampert.k8s.node on this host and ptrampert.k8s.control_plane
         on the control plane first.
     options:
@@ -13,3 +19,14 @@ argument_specs:
         default: "{{ groups['control_plane'][0] }}"
         description:
           - Control-plane host that issues join tokens.
+      worker_drain_on_upgrade:
+        type: bool
+        default: false
+        description:
+          - Drain each worker before upgrading its kubelet. Off, the worker is
+            only cordoned while it is upgraded; restarting the kubelet leaves
+            running containers alone.
+          - A drain that does not finish within five minutes, for example
+            because a PodDisruptionBudget will not let a pod go, fails the run
+            and leaves the worker cordoned. Running the role again resumes from
+            it.

@@ -46,3 +46,9 @@
   certificates, a list of them, are issued by cert-manager and served from Traefik's default
   `TLSStore` by SNI. Plain HTTP redirects to HTTPS. The dashboard is off unless enabled behind
   basic auth.
+- Changing `node_kubernetes_version` upgrades the cluster: `control_plane` and `worker` carry
+  out kubeadm's upgrade procedure one node at a time, with containerd moving to a changed
+  `node_containerd_series` in the same step. `node` no longer refuses a version change on an
+  existing node. Upgrades go one minor version at a time, an interrupted one resumes, and
+  nodes are cordoned rather than drained unless `control_plane_drain_on_upgrade` or
+  `worker_drain_on_upgrade` is set.

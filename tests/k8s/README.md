@@ -48,7 +48,7 @@ For a clean baseline, `vagrant destroy -f` and `vagrant up` again. Restoring a `
 
 ## What the playbooks check
 
-`verify.yml` checks that the cluster was built with the address the inventory asked for, that every inventory host is a Ready node, that every control-plane host joined as one and runs an etcd member, that the system pods are Ready, and that in-cluster DNS resolves. Everything goes through the load balancer, because the kubeconfig points at it. On the stacked topologies it also checks that exactly one node holds the VIP and that *every* control-plane node's HAProxy serves the API, not only the one currently holding it.
+`verify.yml` checks that the cluster was built with the address the inventory asked for, that every inventory host is a Ready node running the Kubernetes version `ptrampert.k8s.node` was given and not cordoned, that every control-plane host joined as one and runs an etcd member, that the system pods are Ready, and that in-cluster DNS resolves. Everything goes through the load balancer, because the kubeconfig points at it. On the stacked topologies it also checks that exactly one node holds the VIP and that *every* control-plane node's HAProxy serves the API, not only the one currently holding it.
 
 It then checks storage. On every topology: that the local-path `StorageClass` is the cluster default, that a claim naming no class binds, and that a second pod reads back what the first one wrote to the volume. On `multi` also the NFS provider: that its class is provisioned by the NFS CSI driver, that a pod on one worker reads back what a pod on the other worker wrote to the same volume, and that the volume really is a directory on `nfs1`'s export. It removes what it created afterwards, so it can be run again.
 
@@ -116,6 +116,26 @@ Then converge and run `verify.yml` as usual. The certificate comes from the stag
 The VMs have no public domain, so Let's Encrypt cannot issue the ingress's certificates. `playbook.yml` creates a CA inside cert-manager instead, the `verify-ca` `ClusterIssuer`, and `inventory/group_vars/all.yml` points `traefik_ingress_node_issuer` at it. The certificates are still issued by cert-manager, which is what the role depends on; only the issuer differs. It is a test fixture, outside the collection: the roles themselves use Let's Encrypt.
 
 The certificates are `*.example.com`, the default, and `*.internal.example.com`. `verify.yml` asks for names under them with `--resolve`, so nothing has to resolve them.
+
+## Upgrading Kubernetes
+
+Build the cluster a minor version behind the defaults, then converge with the defaults, which upgrades it. Pass the older versions as extra vars, with the pause image that version's kubeadm expects:
+
+```yaml
+# old-versions.yml, anywhere outside the repository
+node_kubernetes_version: "1.35.9"
+node_containerd_series: "2.2"
+node_sandbox_image: "registry.k8s.io/pause:3.10.1"
+```
+
+```sh
+ansible-playbook -i inventory/multi-node.yml playbook.yml -e @old-versions.yml   # build at the old version
+ansible-playbook -i inventory/multi-node.yml playbook.yml                        # upgrade
+ansible-playbook -i inventory/multi-node.yml playbook.yml                        # must report changed=0
+ansible-playbook -i inventory/multi-node.yml verify.yml
+```
+
+Add `-e control_plane_drain_on_upgrade=true -e worker_drain_on_upgrade=true` to the upgrade to exercise draining. Passing a version two minor versions ahead instead (`-e node_kubernetes_version=1.37.1` on the old cluster) has to fail at the skew check, before the cluster changes. Interrupting the upgrade, with Ctrl-C or by stopping a VM, and converging again has to finish it.
 
 ## Adding a control-plane node
 

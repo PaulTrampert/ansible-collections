@@ -6,6 +6,9 @@ argument_specs:
       - Disables swap, loads the kernel modules and sysctls Kubernetes needs,
         installs containerd (pinned to a release series) and the kubelet,
         kubeadm, and kubectl packages (held at a fixed version).
+      - Records the Kubernetes version and containerd series it was given in
+        /etc/ansible/facts.d, where ptrampert.k8s.control_plane and
+        ptrampert.k8s.worker read them to upgrade the node.
       - Run on every node, control plane and worker, before
         ptrampert.k8s.control_plane or ptrampert.k8s.worker.
       - Supports Ubuntu only.
@@ -15,14 +18,19 @@ argument_specs:
         default: "1.36.4"
         description:
           - Kubernetes version (major.minor.patch) for kubelet, kubeadm, and kubectl.
-          - The role fails rather than change the version on a node that already
-            has these packages installed.
+          - On a node that already has these packages, the role leaves them
+            alone. Changing the version upgrades the node, through
+            ptrampert.k8s.control_plane and ptrampert.k8s.worker, which take it
+            one minor version at a time.
       node_containerd_series:
         type: str
         default: "2.3"
         description:
           - containerd.io release series to pin apt to, as major.minor (e.g. "2.3",
             patch releases only) or major (e.g. "2", minor releases too).
+          - On a node that already has containerd, changing it moves the node
+            to the new series during the upgrade in ptrampert.k8s.control_plane
+            and ptrampert.k8s.worker.
       node_sandbox_image:
         type: str
         default: "registry.k8s.io/pause:3.10.2"

@@ -2,28 +2,40 @@
 - name: Gather installed package facts
   ansible.builtin.package_facts:
 
-- name: Refuse to change the installed Kubernetes version
-  ansible.builtin.assert:
-    that:
-      - ansible_facts['packages'][item][0]['version'].startswith(node_kubernetes_version ~ '-')
-    fail_msg: >-
-      {{ item }} {{ ansible_facts['packages'][item][0]['version'] }} is installed but
-      node_kubernetes_version is {{ node_kubernetes_version }}. Kubernetes upgrades
-      must follow the kubeadm upgrade procedure.
-    quiet: true
-  loop: "{{ node_kubernetes_packages }}"
-  when: item in ansible_facts['packages']
-
+# Only on a host that lacks them. On a node already in the cluster, moving the
+# packages to a new version is an upgrade, which ptrampert.k8s.control_plane and
+# ptrampert.k8s.worker carry out one node at a time, in the order kubeadm needs.
 - name: Install Kubernetes packages
   ansible.builtin.apt:
-    name: "{{ node_kubernetes_packages | map('regex_replace', '$', '=' ~ node_kubernetes_version ~ '-*') }}"
+    name: >-
+      {{ node_kubernetes_packages | reject('in', ansible_facts['packages'])
+         | map('regex_replace', '$', '=' ~ node_kubernetes_version ~ '-*') }}
     state: present
+  when: node_kubernetes_packages | reject('in', ansible_facts['packages']) | length > 0
 
 - name: Hold Kubernetes packages at their installed version
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: hold
   loop: "{{ node_kubernetes_packages }}"
+
+# What the upgrade in ptrampert.k8s.control_plane and ptrampert.k8s.worker
+# moves the node to, read back as ansible_local.ptrampert_k8s_node.
+- name: Create the local facts directory
+  ansible.builtin.file:
+    path: /etc/ansible/facts.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Record the node's target versions
+  ansible.builtin.copy:
+    dest: /etc/ansible/facts.d/ptrampert_k8s_node.fact
+    content: "{{ node_local_facts | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0644"
 
 - name: Set the kubelet node IP
   ansible.builtin.copy:

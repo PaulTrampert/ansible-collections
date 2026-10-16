@@ -1,0 +1,37 @@
+---
+worker_kubeconfig: /etc/kubernetes/admin.conf
+
+# The workers in this play that had joined the cluster before it, and the
+# Kubernetes versions ptrampert.k8s.node recorded on them.
+worker_upgrade_hosts: >-
+  {{ ansible_play_hosts | select('in', worker_upgrade_joined) | list }}
+worker_upgrade_joined: >-
+  {{ dict(ansible_play_hosts | zip(ansible_play_hosts
+          | map('extract', hostvars, ['worker_kubelet_conf', 'stat', 'exists'])))
+     | dict2items | selectattr('value') | map(attribute='key') | list }}
+worker_upgrade_targets: >-
+  {{ worker_upgrade_hosts
+     | map('extract', hostvars, ['ansible_local', 'ptrampert_k8s_node', 'kubernetes_version'])
+     | list }}
+
+worker_cluster_version: >-
+  {{ (worker_cluster_configuration.stdout | from_yaml)['kubernetesVersion'] | regex_replace('^v', '') }}
+
+# The worker upgrade_node.yml is upgrading, and which of its packages are
+# already at the target: the Kubernetes packages at its version, containerd in
+# its series.
+worker_upgrade_version: >-
+  {{ hostvars[worker_upgrade_host]['ansible_local']['ptrampert_k8s_node']['kubernetes_version'] }}
+worker_upgrade_series: >-
+  {{ hostvars[worker_upgrade_host]['ansible_local']['ptrampert_k8s_node']['containerd_series'] }}
+worker_upgrade_node: "{{ hostvars[worker_upgrade_host]['ansible_facts']['nodename'] | lower }}"
+worker_upgrade_installed: "{{ hostvars[worker_upgrade_host]['ansible_facts']['packages'] }}"
+worker_upgrade_packages:
+  kubeadm: "{{ worker_upgrade_installed['kubeadm'][0]['version'].startswith(worker_upgrade_version ~ '-') }}"
+  kubelet: "{{ worker_upgrade_installed['kubelet'][0]['version'].startswith(worker_upgrade_version ~ '-') }}"
+  kubectl: "{{ worker_upgrade_installed['kubectl'][0]['version'].startswith(worker_upgrade_version ~ '-') }}"
+  containerd.io: "{{ worker_upgrade_installed['containerd.io'][0]['version'].startswith(worker_upgrade_series ~ '.') }}"
+
+# Marks a node this role cordoned for its upgrade.
+worker_upgrade_annotation: ptrampert.k8s/upgrading
+worker_upgrade_drain_timeout: 5m

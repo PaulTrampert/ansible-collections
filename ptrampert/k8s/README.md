@@ -7,8 +7,8 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | Role | Runs on | Purpose |
 |---|---|---|
 | `ptrampert.k8s.node` | every node | Kubernetes host prerequisites: swap off, kernel modules and sysctls, containerd (pinned to a release series), kubelet/kubeadm/kubectl (held at a fixed version), kubelet node IP. |
-| `ptrampert.k8s.control_plane` | `control_plane` | `kubeadm init` on the first node with the API server address it is given, `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
-| `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
+| `ptrampert.k8s.control_plane` | `control_plane` | `kubeadm init` on the first node with the API server address it is given, `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. Upgrades the control plane when the Kubernetes version changes. |
+| `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. Upgrades the workers when the Kubernetes version changes. |
 | `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
 | `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
@@ -18,7 +18,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
-Not supported yet: Kubernetes version upgrades, removing a node from the cluster.
+Not supported yet: removing a node from the cluster.
 
 ## Inventory
 
@@ -147,6 +147,31 @@ Put the new host in the `control_plane` group and run the playbook again. The ro
 Run the playbook against the whole `control_plane` group rather than limiting to the new host: the first node issues the join credentials for all the new ones at once, and the role refuses to run if part of the group is missing from the play.
 
 Whatever serves `control_plane_endpoint` has to learn about the new node too. With the load balancing above, running the whole playbook does that, since its server list and VRRP peers follow the group. An external load balancer needs the node added to its backends by hand.
+
+## Upgrading Kubernetes
+
+Change `node_kubernetes_version`, and `node_containerd_series` if containerd should move too, and run the playbook. The roles carry out kubeadm's upgrade procedure:
+
+1. `node` points apt at the new minor version's repository and records the targets on each host. It doesn't touch the installed packages of a node that is already in the cluster.
+2. `control_plane` checks the whole cluster before changing anything. It refuses a downgrade, a target more than one minor version ahead of the control plane or of any node's kubelet, and a kubelet newer than the control plane. kubeadm upgrades one minor version at a time, so 1.35 to 1.37 is two runs.
+3. On the first control-plane node it upgrades `kubeadm` and runs `kubeadm upgrade apply`. Then, one node at a time, it upgrades every control-plane node: `kubeadm upgrade node` (on all but the first), cordon, containerd, `kubelet` and `kubectl`, restart the kubelet, wait for the node to be Ready on the new version, uncordon.
+4. `worker` does the same for the workers, one at a time, once the control plane is at the target.
+
+The API server is unavailable for a moment while kubeadm replaces each control-plane node's components. With a single control-plane node, that means the API is briefly down.
+
+### Draining
+
+By default a node is only cordoned while it is upgraded, not drained. Restarting the kubelet, and containerd, leaves running containers alone, so workloads keep serving throughout. Draining moves pods off the node first, which only helps when they have somewhere to go: on a single node, or for pods on node-local volumes, draining stops them until the node is uncordoned. Set `control_plane_drain_on_upgrade` or `worker_drain_on_upgrade` to drain. DaemonSet pods, such as Traefik's, stay where they are either way.
+
+A drain that doesn't finish within five minutes, usually because a PodDisruptionBudget won't let a pod be evicted, fails the run with kubectl's account of what is blocking it. The node stays cordoned until the problem is dealt with and the playbook runs again.
+
+### Interrupted upgrades
+
+Running the playbook again picks up where an interrupted upgrade stopped: every step checks the node's state first, and nodes that are already done are skipped. The roles annotate a node with `ptrampert.k8s/upgrading` when they cordon it, and uncordon only nodes carrying that annotation. A node you cordoned yourself is upgraded, but stays cordoned.
+
+### Versions that move with Kubernetes
+
+Keep `node_sandbox_image` at the pause image the new version's kubeadm expects (`kubeadm config images list`). The roles that install the Python Kubernetes client (`*_kubernetes_client_version`) pin a major version that follows the Kubernetes minor version.
 
 ## Storage
 

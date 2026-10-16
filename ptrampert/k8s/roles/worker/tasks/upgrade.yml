@@ -1,0 +1,56 @@
+---
+# Moves the workers that have joined to the Kubernetes version and containerd
+# series that ptrampert.k8s.node recorded on each, once the control plane is
+# there. Does nothing on workers that are already there.
+- name: Read the targets ptrampert.k8s.node recorded
+  ansible.builtin.setup:
+    filter: ansible_local
+
+- name: Check that ptrampert.k8s.node has run
+  ansible.builtin.assert:
+    that:
+      - ansible_local['ptrampert_k8s_node'] is defined
+    fail_msg: >-
+      {{ inventory_hostname }} has no target versions in
+      /etc/ansible/facts.d/ptrampert_k8s_node.fact. Run ptrampert.k8s.node on
+      it before this role.
+    quiet: true
+
+- name: Gather installed package facts
+  ansible.builtin.package_facts:
+
+# From the first worker in the play only, which reaches the others by
+# delegation, so the workers go one at a time.
+- name: Upgrade the workers
+  when:
+    - inventory_hostname == ansible_play_hosts[0]
+    - worker_upgrade_hosts | length > 0
+  block:
+    - name: Read the cluster's configuration
+      ansible.builtin.command: >-
+        kubectl get configmap kubeadm-config --namespace kube-system
+        --output jsonpath={.data.ClusterConfiguration}
+      delegate_to: "{{ worker_control_plane_host }}"
+      environment:
+        KUBECONFIG: "{{ worker_kubeconfig }}"
+      register: worker_cluster_configuration
+      changed_when: false
+
+    # ptrampert.k8s.control_plane checked every node's kubelet against the
+    # version before it moved the control plane there, workers included.
+    - name: Check that the control plane is at the workers' target version
+      ansible.builtin.assert:
+        that:
+          - worker_upgrade_targets | unique == [worker_cluster_version]
+        fail_msg: >-
+          The control plane is at {{ worker_cluster_version }}, but the workers
+          were given {{ worker_upgrade_targets | unique | join(', ') }}. Workers
+          follow the control plane: give them the same node_kubernetes_version,
+          and run ptrampert.k8s.control_plane before this role.
+        quiet: true
+
+    - name: Upgrade the workers one at a time
+      ansible.builtin.include_tasks: upgrade_node.yml
+      loop: "{{ worker_upgrade_hosts }}"
+      loop_control:
+        loop_var: worker_upgrade_host

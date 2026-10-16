@@ -2,6 +2,11 @@
 - name: Check the control-plane configuration
   ansible.builtin.import_tasks: validate.yml
 
+# Before init.yml, whose kubeadm configuration records the installed kubeadm
+# version, which the upgrade moves.
+- name: Upgrade the cluster to the target version
+  ansible.builtin.import_tasks: upgrade.yml
+
 - name: Initialize the cluster
   ansible.builtin.import_tasks: init.yml
   when: control_plane_is_first | bool
