@@ -110,7 +110,9 @@ rclone_restic_server_version: "1.75.2"
 
 The fields, in this order, are `datasource` (where releases are looked up: `docker`, `github-releases`, `github-tags`, `helm`, `pypi`, ...), `depName` (the image, repository, chart or package), then optionally `registryUrl` (e.g. a Helm chart repository) and `versioning` (when the datasource's default scheme doesn't fit). The value must be on the next line, as `<name>: <version>`, quoted or not.
 
-Leave the annotation off versions that are changed by a procedure rather than a bump, like `node_kubernetes_version` and `node_containerd_series`, and say why in the comment above them.
+A pin that needs more than the annotation gets a `packageRules` entry in `.github/renovate.json5` too, matched on its `datasource` and `depName`. `node_kubernetes_version` has one, holding it to one minor version at a time because kubeadm can't upgrade further in one step, and `node_containerd_series` has one, cutting the apt package's versions down to its release series.
+
+Renovate can't tie one pin to another, so a few move by hand in the PR that moves Kubernetes to a new minor version, as its description says: the cap on the Python Kubernetes client (`allowedVersions` in `.github/renovate.json5`), whose major version follows the Kubernetes minor, with the `*_kubernetes_client_version` pins, and `node_sandbox_image`.
 
 ## Pull requests
 
