@@ -45,6 +45,8 @@
           server: "1h"
         server_options: "check check-ssl verify none inter 2s fall 3 rise 2"
         servers: "{{ groups['control_plane'] | map('extract', hostvars, 'k8s_api_backend') | list }}"
+    # Apart from any other service's instances on the same nodes.
+    keepalived_config_name: kube-apiserver
     keepalived_scripts:
       # The local HAProxy rather than the API server: HAProxy answers before
       # any API server exists, which lets the VIP be up for kubeadm init.

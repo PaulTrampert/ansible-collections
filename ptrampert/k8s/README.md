@@ -101,6 +101,9 @@ api_vip_peers: >-
         server_options: "check check-ssl verify none inter 2s fall 3 rise 2"
         servers: "{{ groups['control_plane'] | map('extract', hostvars, 'api_backend') | list }}"
 
+    # Keeps these instances apart from any other service's on the same hosts,
+    # such as an ingress VIP.
+    keepalived_config_name: kube-apiserver
     keepalived_scripts:
       # The local HAProxy, not the API server: see below.
       chk_kube_apiserver_lb:
@@ -133,6 +136,7 @@ Things to know about it:
 
 - **HAProxy uses port 8443, not 6443**, because kube-apiserver already has 6443 on those hosts.
 - **keepalived checks the local HAProxy, not the API server.** HAProxy answers whenever it is running, even before any API server exists, which is what lets the VIP be up for the `kubeadm init` that creates the first one. Every node's HAProxy has every API server as a backend, so the VIP serves the API wherever it lands, including on a node whose own API server is down.
+- **`keepalived_config_name`** gives these instances a configuration of their own, so another service can float its own VIP from the same nodes with a second application of `keepalived`. A host that ran this play before it named one has the instance in `/etc/keepalived/fragments.d/10-default.conf`; delete that file when adding the name. Until it is gone the role refuses to apply the configuration, which would define the instance twice, and leaves the running one in place.
 - **VRRP uses IP protocol 112**, which must be allowed between the control-plane nodes.
 - **On a single control-plane node** this puts HAProxy and keepalived in the critical path with nothing to fail over to. A DNS name pointing at the node is the leaner way to keep the option of growing later.
 
