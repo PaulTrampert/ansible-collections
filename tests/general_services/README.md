@@ -30,8 +30,8 @@ the backend on whichever holds the backend VIP, checking that the web VIP stays 
 second time. Run it deliberately; it starts each service again and waits for its VIP to return
 before finishing.
 
-To get back to a clean baseline without rebuilding, take a snapshot right after `vagrant up`
-(`vagrant snapshot save fresh`) and restore it before each run (`vagrant snapshot restore fresh`).
+For a clean baseline, `vagrant destroy -f` and `vagrant up` again. Restoring a `vagrant snapshot`
+is quicker but can leave a VM unreachable over SSH until it is rebooted.
 
 Some of the IPs are also used by `tests/k8s/` (`worker1` is .21 and `nfs1` is .30), so don't bring
 both harnesses up at once.

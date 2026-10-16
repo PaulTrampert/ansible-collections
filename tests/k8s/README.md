@@ -44,7 +44,7 @@ vagrant destroy -f
 
 `single` needs no `-i`; it is the default in `ansible.cfg`.
 
-To get back to a clean baseline without rebuilding, take a snapshot right after `vagrant up` (`vagrant snapshot save fresh`) and restore it before each run (`vagrant snapshot restore fresh`).
+For a clean baseline, `vagrant destroy -f` and `vagrant up` again. Restoring a `vagrant snapshot` is quicker but can leave a VM unreachable over SSH until it is rebooted.
 
 ## What the playbooks check
 
