@@ -32,6 +32,23 @@
           - verify_nodes.stdout_lines | sort == verify_expected
         fail_msg: "Nodes {{ verify_nodes.stdout_lines }}, expected {{ verify_expected }}"
 
+    # After an upgrade, every node has to have got there and been uncordoned.
+    # The target is what ptrampert.k8s.node recorded.
+    - name: Read each node's kubelet version and whether it is cordoned
+      ansible.builtin.command: >-
+        kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}={.status.nodeInfo.kubeletVersion},{.spec.unschedulable}{"\n"}{end}'
+      register: verify_node_versions
+      changed_when: false
+
+    - name: Check that every node runs the target version and is schedulable
+      vars:
+        verify_expected: >-
+          {{ groups['k8s_cluster'] | map('regex_replace', '$', '=v' ~ ansible_local['ptrampert_k8s_node']['kubernetes_version'] ~ ',') | sort }}
+      ansible.builtin.assert:
+        that:
+          - verify_node_versions.stdout_lines | sort == verify_expected
+        fail_msg: "Nodes {{ verify_node_versions.stdout_lines }}, expected {{ verify_expected }}"
+
     - name: Read the control-plane nodes
       ansible.builtin.command: kubectl get nodes -l node-role.kubernetes.io/control-plane -o name
       register: verify_control_plane_nodes
