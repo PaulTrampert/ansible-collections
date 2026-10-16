@@ -46,6 +46,11 @@ k8s_cluster:
 control_plane_lb:
   hosts: {}
 
+# A single ingress node, on a worker.
+ingress:
+  hosts:
+    worker1:
+
 # Only the multi topology has an NFS server.
 nfs_servers:
   hosts: {}

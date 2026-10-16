@@ -69,3 +69,22 @@ cert_manager_dns01:
       key: tsig-secret
 cert_manager_dns01_credential:
   tsig-secret: dmVyaWZ5LXRzaWctc2VjcmV0
+
+# The ingress VIP, which playbook.yml floats between the ingress nodes in the
+# topologies that have more than one. The others are reached on the only ingress
+# node's address.
+k8s_ingress_vip: 192.168.56.7
+traefik_ingress_node_endpoint: >-
+  {{ k8s_ingress_vip if groups['ingress'] | length > 1
+     else hostvars[groups['ingress'][0]]['ansible_host'] }}
+
+# The VMs have no public domain, so the ingress certificates come from a CA
+# that playbook.yml creates in cert-manager, rather than from Let's Encrypt.
+# Two levels of wildcard, so that verify.yml can check selection by SNI.
+traefik_ingress_node_issuer: verify-ca
+traefik_ingress_node_certificates:
+  - secret_name: wildcard-example-com
+    dns_names: ["*.example.com"]
+    default: true
+  - secret_name: wildcard-internal-example-com
+    dns_names: ["*.internal.example.com"]

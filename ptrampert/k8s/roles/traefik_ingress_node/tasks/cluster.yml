@@ -1,0 +1,133 @@
+---
+# Everything here goes through the API server from the control-plane host,
+# which has the admin kubeconfig and helm. The parts that concern the whole
+# cluster rather than one node run once for all the hosts.
+
+# kubernetes.core.k8s needs the Python client. The distribution's package is
+# older than kubernetes.core supports, so the client comes from PyPI, into a
+# venv of its own.
+- name: Install venv support
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+  delegate_to: "{{ traefik_ingress_node_control_plane_host }}"
+  run_once: true
+
+- name: Install the Python Kubernetes client
+  ansible.builtin.pip:
+    name: kubernetes=={{ traefik_ingress_node_kubernetes_client_version }}
+    virtualenv: "{{ traefik_ingress_node_venv }}"
+    virtualenv_command: python3 -m venv
+  delegate_to: "{{ traefik_ingress_node_control_plane_host }}"
+  run_once: true
+
+- name: Install Traefik through the API server
+  delegate_to: "{{ traefik_ingress_node_control_plane_host }}"
+  vars:
+    ansible_python_interpreter: "{{ traefik_ingress_node_venv }}/bin/python"
+  block:
+    # Leaving a host out of later runs leaves the label in place; the README
+    # says how to take it off.
+    - name: Label the node as an ingress node
+      kubernetes.core.k8s:
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        state: patched
+        api_version: v1
+        kind: Node
+        name: "{{ traefik_ingress_node_name }}"
+        definition: "{{ {'metadata': {'labels': {traefik_ingress_node_label: ''}}} }}"
+
+    - name: Create the chart directory
+      ansible.builtin.file:
+        path: "{{ traefik_ingress_node_chart_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      run_once: true
+
+    - name: Download the chart
+      kubernetes.core.helm_pull:
+        chart_ref: "{{ traefik_ingress_node_chart }}"
+        repo_url: "{{ traefik_ingress_node_chart_repo }}"
+        chart_version: "{{ traefik_ingress_node_version }}"
+        destination: "{{ traefik_ingress_node_chart_dir }}"
+        untar_chart: true
+      run_once: true
+
+    # The chart keeps its CRDs in crds/, which Helm installs with the first
+    # release and never touches again, so a chart upgrade would run the new
+    # Traefik against the old CRDs. The role applies them on every run instead,
+    # and Helm is told to leave them alone. Only Traefik's own: the chart also
+    # carries Traefik Hub's, which nothing here uses.
+    - name: Find the CRDs
+      ansible.builtin.find:
+        paths: "{{ traefik_ingress_node_chart_dir }}/{{ traefik_ingress_node_chart }}/crds"
+        patterns: "traefik.io_*.yaml"
+      register: traefik_ingress_node_crds
+      run_once: true
+
+    # Server-side, because the largest CRDs are too big for the annotation a
+    # client-side apply keeps its last state in.
+    - name: Apply the CRDs
+      kubernetes.core.k8s:
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        src: "{{ item.path }}"
+        apply: true
+        server_side_apply:
+          field_manager: "{{ traefik_ingress_node_field_manager }}"
+          force_conflicts: true
+      loop: "{{ traefik_ingress_node_crds.files | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      run_once: true
+
+    # Waits for a ready Traefik pod on every labelled node.
+    - name: Install Traefik
+      kubernetes.core.helm:
+        name: "{{ traefik_ingress_node_release }}"
+        chart_ref: "{{ traefik_ingress_node_chart_dir }}/{{ traefik_ingress_node_chart }}"
+        release_namespace: "{{ traefik_ingress_node_namespace }}"
+        create_namespace: true
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        skip_crds: true
+        values: >-
+          {{ traefik_ingress_node_values
+             | combine(traefik_ingress_node_endpoint_values, recursive=true) }}
+        wait: true
+      run_once: true
+
+    # Issued once, by cert-manager, into Secrets every Traefik pod reads, so
+    # the number of pods makes no difference to how often Let's Encrypt is
+    # asked. DNS-01 waits for its TXT record to propagate, which can take
+    # minutes.
+    - name: Request the certificates
+      kubernetes.core.k8s:
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        template: certificate.yaml.j2
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_timeout: 600
+      loop: "{{ traefik_ingress_node_certificates }}"
+      loop_control:
+        label: "{{ item.secret_name }}"
+      run_once: true
+
+    # Traefik picks among the store's certificates by SNI, so a route needs no
+    # TLS settings of its own for any host they cover.
+    - name: Load the certificates into Traefik's default store
+      kubernetes.core.k8s:
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        template: tls-store.yaml.j2
+        state: "{{ 'present' if traefik_ingress_node_certificates else 'absent' }}"
+      run_once: true
+
+    - name: Serve the dashboard
+      kubernetes.core.k8s:
+        kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
+        template: dashboard.yaml.j2
+        state: "{{ 'present' if traefik_ingress_node_dashboard_enabled else 'absent' }}"
+      run_once: true
+      no_log: true

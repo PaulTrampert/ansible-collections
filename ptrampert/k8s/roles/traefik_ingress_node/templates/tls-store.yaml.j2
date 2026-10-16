@@ -1,0 +1,18 @@
+---
+# Traefik reads only the store named "default" for certificates that routes do
+# not name themselves.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ traefik_ingress_node_namespace }}
+spec:
+  certificates:
+{% for certificate in traefik_ingress_node_certificates %}
+    - secretName: {{ certificate.secret_name }}
+{% endfor %}
+{% for certificate in traefik_ingress_node_certificates if certificate.default | default(false) %}
+  # Served when the client's SNI matches none of the certificates.
+  defaultCertificate:
+    secretName: {{ certificate.secret_name }}
+{% endfor %}

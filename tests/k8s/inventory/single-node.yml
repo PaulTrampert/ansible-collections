@@ -17,6 +17,11 @@ control_plane_lb:
   children:
     control_plane: {}
 
+# A single ingress node, so no keepalived: it is reached on its own address.
+ingress:
+  hosts:
+    cp1:
+
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}

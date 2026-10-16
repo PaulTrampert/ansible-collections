@@ -1,0 +1,77 @@
+---
+traefik_ingress_node_release: traefik
+traefik_ingress_node_chart: traefik
+
+# One directory per chart version, so that a new version is pulled next to the
+# old one rather than over it.
+traefik_ingress_node_chart_dir: /usr/local/lib/traefik-{{ traefik_ingress_node_version }}
+
+# Holds the Python Kubernetes client kubernetes.core runs with, on the
+# control-plane host.
+traefik_ingress_node_venv: /opt/traefik-ingress-node/venv
+
+# Owns the CRDs' fields on the API server in Helm's place.
+traefik_ingress_node_field_manager: ptrampert.k8s.traefik_ingress_node
+
+# Marks a node as an ingress node; Traefik's DaemonSet selects on it. A kubelet
+# cannot set a node-role.kubernetes.io/* label on its own node, so the role sets
+# it through the API server.
+traefik_ingress_node_label: node-role.kubernetes.io/ingress
+
+traefik_ingress_node_name: "{{ ansible_facts['nodename'] | lower }}"
+
+# Added to the chart values only when there is an endpoint to report.
+traefik_ingress_node_endpoint_values: >-
+  {{ {'providers': {'kubernetesIngress': {'ingressEndpoint': {'ip': traefik_ingress_node_endpoint}}}}
+     if traefik_ingress_node_endpoint else {} }}
+
+# The dashboard's basic auth users, Middleware and IngressRoute share this name.
+traefik_ingress_node_dashboard_name: traefik-dashboard
+
+traefik_ingress_node_values:
+  # One pod on every ingress node, taking ports 80 and 443 on the node itself.
+  deployment:
+    kind: DaemonSet
+  nodeSelector:
+    node-role.kubernetes.io/ingress: ""
+  # The label decides placement, not the taint: a control-plane node the role
+  # is applied to serves ingress too.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  # A replacement pod cannot start next to the old one, which still holds the
+  # host ports, so an update replaces one node's pod at a time.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  ports:
+    web:
+      hostPort: 80
+      http:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+    websecure:
+      hostPort: 443
+  # Clients reach the pods through the host ports, so nothing needs a Service.
+  service:
+    enabled: false
+  providers:
+    kubernetesCRD:
+      enabled: true
+    kubernetesIngress:
+      enabled: true
+      # There is no Service to take an address from; the Ingress status gets
+      # traefik_ingress_node_endpoint instead, when it is set.
+      publishedService:
+        enabled: false
+  # Serves the dashboard on the pods' own port 8080, which no host port or
+  # Service exposes, so that kubectl port-forward reaches it.
+  api:
+    dashboard: true
+    insecure: true

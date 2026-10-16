@@ -1,0 +1,38 @@
+---
+# Written as data rather than stringData, which the API server converts and
+# never returns, so that an unchanged Secret compares equal on the next run.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ traefik_ingress_node_dashboard_name }}
+  namespace: {{ traefik_ingress_node_namespace }}
+type: Opaque
+data:
+  users: {{ traefik_ingress_node_dashboard_users | join('\n') | b64encode }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ traefik_ingress_node_dashboard_name }}
+  namespace: {{ traefik_ingress_node_namespace }}
+spec:
+  basicAuth:
+    secret: {{ traefik_ingress_node_dashboard_name }}
+---
+# On websecure only. Plain HTTP is redirected before any route sees it, and
+# the certificate comes from the default store like every other route's.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ traefik_ingress_node_dashboard_name }}
+  namespace: {{ traefik_ingress_node_namespace }}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`{{ traefik_ingress_node_dashboard_host }}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))
+      middlewares:
+        - name: {{ traefik_ingress_node_dashboard_name }}
+      services:
+        - kind: TraefikService
+          name: api@internal

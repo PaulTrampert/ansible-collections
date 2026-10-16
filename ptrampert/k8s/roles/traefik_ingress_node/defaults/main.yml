@@ -1,0 +1,46 @@
+---
+# Control-plane host the role talks to the cluster through: it labels the
+# nodes and installs Traefik from there.
+traefik_ingress_node_control_plane_host: "{{ groups['control_plane'][0] }}"
+
+# IP address clients reach the ingress at: a VIP floated across the ingress
+# nodes, a load balancer in front of them, or a single node's own address.
+# Traefik reports it in the status of every Ingress it serves. Empty leaves the
+# status without an address.
+traefik_ingress_node_endpoint: ""
+
+# Certificates Traefik serves, selected by SNI. Each entry becomes a
+# cert-manager Certificate in traefik_ingress_node_namespace and goes into
+# Traefik's default TLSStore. See meta/argument_specs.yml for the shape of an
+# entry; exactly one must be the default.
+traefik_ingress_node_certificates: []
+
+# ClusterIssuer the certificates are issued by.
+traefik_ingress_node_issuer: letsencrypt-production
+
+# Serve the dashboard on traefik_ingress_node_dashboard_host, behind basic
+# auth. Off, it is only reachable through kubectl port-forward.
+traefik_ingress_node_dashboard_enabled: false
+traefik_ingress_node_dashboard_host: ""
+traefik_ingress_node_dashboard_users: []
+
+# Traefik Helm chart version. Each chart version pins the Traefik release it
+# runs.
+# renovate: datasource=helm depName=traefik registryUrl=https://traefik.github.io/charts
+traefik_ingress_node_version: "42.0.0"
+
+# Where the chart comes from.
+traefik_ingress_node_chart_repo: https://traefik.github.io/charts
+
+# Namespace Traefik runs in, and where its certificates are kept. Created if it
+# does not exist.
+traefik_ingress_node_namespace: traefik
+
+# Version of the Python Kubernetes client the role installs for
+# kubernetes.core, from PyPI. Its major version follows the Kubernetes minor
+# version it was built against.
+# renovate: datasource=pypi depName=kubernetes
+traefik_ingress_node_kubernetes_client_version: "36.0.3"
+
+# Admin kubeconfig on the control-plane host, used to talk to the cluster.
+traefik_ingress_node_kubeconfig: /etc/kubernetes/admin.conf

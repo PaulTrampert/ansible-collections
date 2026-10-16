@@ -1,0 +1,94 @@
+---
+# Fails the ingress node holding the ingress VIP, the way ingress_failover_mode
+# says, checks that the VIP moves and the route keeps serving, then restores
+# the node and checks that the VIP comes back.
+#
+#   traefik    takes the ingress label off the node, so its Traefik pod goes
+#              away while keepalived keeps running
+#   keepalived stops keepalived, as losing the node would
+- name: Find the node holding the ingress VIP
+  ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+  vars:
+    k8s_vip_address: "{{ k8s_ingress_vip }}"
+
+- name: Check that exactly one node holds the ingress VIP to begin with
+  ansible.builtin.assert:
+    that:
+      - k8s_vip_holders | length == 1
+    fail_msg: "Expected exactly one node to hold {{ k8s_ingress_vip }}, got {{ k8s_vip_holders }}"
+
+- name: Note which node to fail
+  ansible.builtin.set_fact:
+    ingress_failover_from: "{{ k8s_vip_holders[0] }}"
+
+- name: Take Traefik off {{ ingress_failover_from }}
+  ansible.builtin.command: kubectl label node {{ ingress_failover_from }} node-role.kubernetes.io/ingress-
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: true
+  when: ingress_failover_mode == 'traefik'
+
+- name: Stop keepalived on {{ ingress_failover_from }}
+  ansible.builtin.systemd_service:
+    name: keepalived
+    state: stopped
+  when: ingress_failover_mode == 'keepalived' and inventory_hostname == ingress_failover_from
+
+# Only a node whose Traefik serves takes the VIP, so this succeeding means it
+# has moved somewhere that works. curl for --resolve, which uri has no
+# equivalent of.
+- name: Wait for the route to serve on the VIP again  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl --silent --insecure --max-time 5
+    --resolve whoami.example.com:443:{{ k8s_ingress_vip }} https://whoami.example.com/
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  register: ingress_failover_response
+  until: ingress_failover_response.rc == 0 and 'Hostname:' in ingress_failover_response.stdout
+  retries: 20
+  delay: 3
+  changed_when: false
+
+- name: Find the node holding the ingress VIP now
+  ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+  vars:
+    k8s_vip_address: "{{ k8s_ingress_vip }}"
+
+- name: Check that the ingress VIP moved to another node
+  ansible.builtin.assert:
+    that:
+      - k8s_vip_holders | length == 1
+      - k8s_vip_holders[0] != ingress_failover_from
+    fail_msg: >-
+      Expected {{ k8s_ingress_vip }} to move off {{ ingress_failover_from }},
+      held by {{ k8s_vip_holders }}
+
+- name: Give Traefik back to {{ ingress_failover_from }}
+  ansible.builtin.command: kubectl label node {{ ingress_failover_from }} node-role.kubernetes.io/ingress=
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: true
+  when: ingress_failover_mode == 'traefik'
+
+- name: Start keepalived on {{ ingress_failover_from }}
+  ansible.builtin.systemd_service:
+    name: keepalived
+    state: started
+  when: ingress_failover_mode == 'keepalived' and inventory_hostname == ingress_failover_from
+
+# It is first in the group and so has the highest priority, which takes the
+# VIP back once its Traefik serves again.
+- name: Wait for the ingress VIP to return to {{ ingress_failover_from }}
+  ansible.builtin.command: ip -json -4 address show dev {{ k8s_interface }}
+  register: ingress_failover_addresses
+  until: >-
+    k8s_ingress_vip in (ingress_failover_addresses.stdout | from_json
+                                 | map(attribute='addr_info') | flatten | map(attribute='local'))
+  retries: 40
+  delay: 3
+  changed_when: false
+  when: inventory_hostname == ingress_failover_from

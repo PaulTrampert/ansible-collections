@@ -1,0 +1,6 @@
+---
+- name: Check the ingress configuration
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Configure the cluster through the control plane
+  ansible.builtin.import_tasks: cluster.yml

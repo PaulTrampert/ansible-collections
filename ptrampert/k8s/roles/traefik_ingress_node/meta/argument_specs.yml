@@ -1,0 +1,139 @@
+---
+argument_specs:
+  main:
+    short_description: Make a host a Kubernetes ingress node, running Traefik.
+    description:
+      - Makes the hosts it is applied to the cluster's ingress nodes. Each is
+        labelled C(node-role.kubernetes.io/ingress), and Traefik runs on every
+        node with that label as a DaemonSet, serving ports 80 and 443 on the
+        node itself.
+      - Gets no traffic to the nodes itself. Whatever does, such as a VIP
+        floated across them by ptrampert.general_services.keepalived, is up to
+        the playbook; see the collection README.
+      - Routes are declared with Traefik's C(IngressRoute), or with standard
+        C(Ingress); both providers are enabled. Plain HTTP always redirects to
+        HTTPS.
+      - Certificates come from cert-manager, which
+        ptrampert.k8s.cert_manager installs, and are served from Traefik's
+        default C(TLSStore), so routes carry no TLS settings of their own.
+      - Apply it after ptrampert.k8s.cert_manager. It talks to the cluster through
+        O(traefik_ingress_node_control_plane_host), which needs kubectl access
+        and the helm binary, both of which ptrampert.k8s.control_plane leaves
+        behind, and installs the Python Kubernetes client from PyPI there, in a
+        venv under C(/opt/traefik-ingress-node).
+      - Installs the upstream Helm chart at a pinned version, and applies its
+        CRDs itself on every run, since Helm never upgrades them.
+    options:
+      traefik_ingress_node_control_plane_host:
+        type: str
+        default: "{{ groups['control_plane'][0] }}"
+        description:
+          - Control-plane host the role labels the nodes and installs Traefik
+            from.
+      traefik_ingress_node_endpoint:
+        type: str
+        default: ""
+        description:
+          - IP address clients reach the ingress at, such as a VIP floated
+            across the ingress nodes, a load balancer in front of them, or a
+            single node's own address. Traefik reports it in the status of
+            every Ingress it serves.
+          - Empty leaves the status without an address.
+      traefik_ingress_node_certificates:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Certificates Traefik serves, selected by the name a client asks for
+            (SNI). Each becomes a cert-manager C(Certificate) in
+            O(traefik_ingress_node_namespace), and its Secret goes into
+            Traefik's default C(TLSStore), so every route on a host one of them
+            covers is served without TLS settings of its own.
+          - A wildcard covers one label and not its own apex,
+            so C(*.example.com) covers C(app.example.com) but neither
+            C(app.internal.example.com) nor C(example.com). Give each level
+            that is served a certificate of its own.
+          - Exactly one must be the default. With none at all, Traefik serves
+            a self-signed certificate.
+          - Removing an entry leaves its C(Certificate) and Secret in place.
+        options:
+          secret_name:
+            type: str
+            required: true
+            description:
+              - Name of the C(Certificate) and of the Secret it is issued into.
+          dns_names:
+            type: list
+            elements: str
+            required: true
+            description:
+              - Names the certificate covers, such as C(*.example.com).
+          default:
+            type: bool
+            default: false
+            description:
+              - Serve this certificate when a client asks for a name no
+                certificate covers.
+      traefik_ingress_node_issuer:
+        type: str
+        default: letsencrypt-production
+        description:
+          - C(ClusterIssuer) the certificates are issued by. Use
+            C(letsencrypt-staging) until issuance works.
+      traefik_ingress_node_dashboard_enabled:
+        type: bool
+        default: false
+        description:
+          - Serve Traefik's dashboard on O(traefik_ingress_node_dashboard_host),
+            behind basic auth. The dashboard lists every route, and so every
+            host name the cluster serves.
+          - Off, it is reachable only from inside the cluster, such as through
+            C(kubectl port-forward).
+      traefik_ingress_node_dashboard_host:
+        type: str
+        default: ""
+        description:
+          - Host name the dashboard is served on. Required when the dashboard
+            is enabled, and must be covered by one of
+            O(traefik_ingress_node_certificates).
+      traefik_ingress_node_dashboard_users:
+        type: list
+        elements: str
+        default: []
+        description:
+          - Users allowed into the dashboard, as htpasswd lines such as
+            C(htpasswd -nB <user>) prints. Hashed rather than plain, so that
+            the role does not produce a new salt on every run. Required when
+            the dashboard is enabled.
+      traefik_ingress_node_version:
+        type: str
+        # renovate: datasource=helm depName=traefik registryUrl=https://traefik.github.io/charts
+        default: "42.0.0"
+        description:
+          - Version of the Traefik Helm chart to install. Each chart version
+            pins the Traefik release it runs.
+      traefik_ingress_node_chart_repo:
+        type: str
+        default: https://traefik.github.io/charts
+        description:
+          - Chart repository Traefik is installed from.
+      traefik_ingress_node_namespace:
+        type: str
+        default: traefik
+        description:
+          - Namespace Traefik runs in, and where its certificates are kept.
+            Created if it does not exist.
+      traefik_ingress_node_kubernetes_client_version:
+        type: str
+        # renovate: datasource=pypi depName=kubernetes
+        default: "36.0.3"
+        description:
+          - Version of the Python Kubernetes client, from PyPI, that the role
+            installs for C(kubernetes.core). Its major version follows the
+            Kubernetes minor version it was built against.
+      traefik_ingress_node_kubeconfig:
+        type: str
+        default: /etc/kubernetes/admin.conf
+        description:
+          - kubeconfig on the control-plane host the role uses to talk to the
+            cluster.

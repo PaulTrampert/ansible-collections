@@ -190,3 +190,95 @@
           skip: true
   roles:
     - ptrampert.k8s.cert_manager
+
+# Let's Encrypt cannot issue for the VMs, which have no public domain, so a CA
+# inside cert-manager stands in for it. The ingress certificates are still
+# issued by cert-manager, which is what the ingress role depends on. A test
+# fixture, not a model: the collection's roles use Let's Encrypt.
+- name: Create a certificate authority for the ingress certificates
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Create the CA and its issuer
+      ansible.builtin.command:
+        cmd: kubectl apply -f -
+        stdin: |
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: verify-self-signed
+          spec:
+            selfSigned: {}
+          ---
+          apiVersion: cert-manager.io/v1
+          kind: Certificate
+          metadata:
+            name: verify-ca
+            namespace: cert-manager
+          spec:
+            isCA: true
+            commonName: ptrampert.k8s test CA
+            secretName: verify-ca
+            privateKey:
+              algorithm: ECDSA
+              size: 256
+            issuerRef:
+              kind: ClusterIssuer
+              name: verify-self-signed
+          ---
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: verify-ca
+          spec:
+            ca:
+              secretName: verify-ca
+      register: verify_ca
+      changed_when: verify_ca.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+    - name: Wait for the CA issuer
+      ansible.builtin.command: kubectl wait clusterissuer/verify-ca --for=condition=Ready --timeout=120s
+      changed_when: false
+
+- name: Make the ingress nodes
+  hosts: ingress
+  become: true
+  roles:
+    - ptrampert.k8s.traefik_ingress_node
+
+# With more than one ingress node, a VIP floats between them, held only by a
+# node whose Traefik answers on 443. A lone ingress node is reached on its own
+# address and gets no keepalived. On a control-plane node this is a second
+# application of keepalived beside the API server's, under a name of its own.
+- name: Float the ingress address across the ingress nodes
+  hosts: ingress
+  become: true
+  tasks:
+    - name: Float the ingress address
+      ansible.builtin.include_role:
+        name: ptrampert.general_services.keepalived
+      when: groups['ingress'] | length > 1
+      vars:
+        keepalived_config_name: traefik-ingress
+        keepalived_scripts:
+          chk_traefik_ingress:
+            command: "/bin/bash -c '</dev/tcp/{{ ansible_host }}/443'"
+            interval: 2
+            timeout: 2
+            fall: 2
+            rise: 2
+        keepalived_vrrp_instances:
+          - name: traefik-ingress
+            interface: "{{ k8s_interface }}"
+            state: BACKUP
+            virtual_router_id: 52
+            priority: "{{ 150 - groups['ingress'].index(inventory_hostname) }}"
+            virtual_ipaddresses: ["{{ k8s_ingress_vip }}/24"]
+            unicast_src_ip: "{{ ansible_host }}"
+            unicast_peers: >-
+              {{ groups['ingress'] | reject('eq', inventory_hostname)
+                 | map('extract', hostvars, 'ansible_host') | list }}
+            track_scripts:
+              - chk_traefik_ingress

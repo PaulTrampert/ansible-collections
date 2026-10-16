@@ -1,0 +1,27 @@
+---
+- name: Check that exactly one certificate is the default
+  vars:
+    traefik_ingress_node_defaults: >-
+      {{ traefik_ingress_node_certificates
+         | selectattr('default', 'defined') | selectattr('default') | list }}
+  ansible.builtin.assert:
+    that:
+      - traefik_ingress_node_certificates | length == 0 or traefik_ingress_node_defaults | length == 1
+    fail_msg: >-
+      Exactly one of traefik_ingress_node_certificates must have default: true,
+      the certificate served when a client asks for a name none of them
+      covers. {{ traefik_ingress_node_defaults | length }} do.
+    quiet: true
+
+- name: Check the dashboard configuration
+  when: traefik_ingress_node_dashboard_enabled | bool
+  ansible.builtin.assert:
+    that:
+      - traefik_ingress_node_dashboard_host | length > 0
+      - traefik_ingress_node_dashboard_users | length > 0
+    fail_msg: >-
+      traefik_ingress_node_dashboard_enabled needs both
+      traefik_ingress_node_dashboard_host, the name it is served on, and
+      traefik_ingress_node_dashboard_users, so that it is never served without
+      authentication.
+    quiet: true
