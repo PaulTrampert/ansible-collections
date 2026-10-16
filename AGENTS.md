@@ -87,7 +87,7 @@ vagrant destroy -f                        # tear down
 
 Harness runs take a long time: bringing up a topology, converging it twice and verifying it can take an hour or more. While anything from this repository is running, report its status every 10 minutes without being asked: the topology and step it is on, what has finished and with what result, and which VMs are up. Waiting for the run to finish, or for someone to ask, isn't enough.
 
-Use `vagrant snapshot save`/`restore` to get back to a clean baseline quickly instead of rebuilding VMs between runs. A change to a role isn't done until it converges on fresh VMs and a second run reports no changes.
+For a clean baseline, destroy the VMs and bring them up again (`vagrant destroy -f && vagrant up`) rather than restoring a `vagrant snapshot`: a restored VM can come back unreachable over SSH until it is rebooted, and only a new VM is fresh. A change to a role isn't done until it converges on fresh VMs and a second run reports no changes.
 
 ## Documentation
 
