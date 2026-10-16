@@ -26,6 +26,10 @@ Set `K8S_TOPOLOGY` for **every** `vagrant` command, including `destroy` — with
 
 `ptrampert.k8s.control_plane` only takes the API server's address, so `playbook.yml` sets up what serves it before the control plane, the way a real playbook would. In `single`, `multi` and `stacked-ha`, the control-plane nodes are in the `control_plane_lb` group. That play runs `ptrampert.general_services.haproxy` on port 8443 on each of them, balancing across every API server, and `ptrampert.general_services.keepalived` to float the VIP between them. In `external-lb` that group is empty, and `lb1`, in `load_balancers`, runs HAProxy on 6443 instead.
 
+## The ingress VIP
+
+`ptrampert.k8s.traefik_ingress_node` gets no traffic to the ingress nodes itself. Where there is more than one ingress node, `playbook.yml` floats the ingress VIP between them with `ptrampert.general_services.keepalived` after the role, under `keepalived_config_name: traefik-ingress`. On `stacked-ha`, where every control-plane node is an ingress node, that is a second keepalived configuration beside the API server's.
+
 ## Running a topology
 
 ```sh
@@ -54,7 +58,7 @@ Last, K8up: that the operator is running and that the role, not Helm, applied it
 
 Then cert-manager: that its deployments are rolled out, its CRDs established, and both `ClusterIssuer`s Ready, which means each has registered an ACME account with its Let's Encrypt directory. With a real DNS provider in `cert-manager-dns.yml` (below), it also requests a wildcard certificate from the staging issuer in a throwaway namespace, waits for it to be issued, and checks its Secret is a `kubernetes.io/tls` Secret for that wildcard. Without one, it says so and skips that part.
 
-Last, the ingress. On every ingress node: that keepalived floats the ingress VIP if there is more than one ingress node and not otherwise, and that exactly one node holds the VIP, or none. On the cluster: that Traefik runs on exactly the ingress nodes, that each certificate is Ready and was requested once, and then, against a throwaway backend, that an `IngressRoute` under each wildcard and a standard `Ingress` all serve over HTTPS through the VIP (or the only ingress node), with curl checking each certificate against the test CA and the name; that every ingress node serves the route and the same certificates, with `*.internal.example.com` chosen for a name under it and the default for a name matching neither; that plain HTTP is redirected to HTTPS; and that the dashboard answers 401 without the right password and 200 with it where it is enabled, and 404 where it is not. Finally, that the role refuses an enabled dashboard with no users.
+Last, the ingress. On every ingress node: that keepalived floats the ingress VIP if there is more than one ingress node and not otherwise, and that exactly one node holds the VIP, or none. On the cluster: that Traefik runs on exactly the ingress nodes, that each certificate is Ready and was requested once, and then, against a throwaway backend, that an `IngressRoute` under each wildcard and a standard `Ingress` all serve over HTTPS through the VIP (or the only ingress node), with curl checking each certificate against the test CA and the name; that the `Ingress`'s status gives that address; that every ingress node serves the route and the same certificates, with `*.internal.example.com` chosen for a name under it and the default for a name matching neither; that plain HTTP is redirected to HTTPS; and that the dashboard answers 401 without the right password and 200 with it where it is enabled, and 404 where it is not. Finally, that the role refuses an enabled dashboard with no users.
 
 `failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
 

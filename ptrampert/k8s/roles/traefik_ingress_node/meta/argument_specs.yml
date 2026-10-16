@@ -7,18 +7,16 @@ argument_specs:
         labelled C(node-role.kubernetes.io/ingress), and Traefik runs on every
         node with that label as a DaemonSet, serving ports 80 and 443 on the
         node itself.
-      - With more than one ingress node, keepalived floats
-        O(traefik_ingress_node_vip) between them, and only a node whose Traefik
-        is serving holds it. A single ingress node gets no keepalived and is
-        reached on its own address.
+      - Gets no traffic to the nodes itself. Whatever does, such as a VIP
+        floated across them by ptrampert.general_services.keepalived, is up to
+        the playbook; see the collection README.
       - Routes are declared with Traefik's C(IngressRoute), or with standard
         C(Ingress); both providers are enabled. Plain HTTP always redirects to
         HTTPS.
       - Certificates come from cert-manager, which
         ptrampert.k8s.cert_manager installs, and are served from Traefik's
         default C(TLSStore), so routes carry no TLS settings of their own.
-      - Apply it to every host in O(traefik_ingress_node_group) at once, after
-        ptrampert.k8s.cert_manager. It talks to the cluster through
+      - Apply it after ptrampert.k8s.cert_manager. It talks to the cluster through
         O(traefik_ingress_node_control_plane_host), which needs kubectl access
         and the helm binary, both of which ptrampert.k8s.control_plane leaves
         behind, and installs the Python Kubernetes client from PyPI there, in a
@@ -26,44 +24,21 @@ argument_specs:
       - Installs the upstream Helm chart at a pinned version, and applies its
         CRDs itself on every run, since Helm never upgrades them.
     options:
-      traefik_ingress_node_group:
-        type: str
-        default: ingress
-        description:
-          - Inventory group holding the ingress nodes, which is the group this
-            role is applied to. The role refuses to run on a host outside it,
-            or with part of it missing from the play.
-          - Removing a host from the group does not take its label off. See the
-            collection README.
       traefik_ingress_node_control_plane_host:
         type: str
         default: "{{ groups['control_plane'][0] }}"
         description:
           - Control-plane host the role labels the nodes and installs Traefik
             from.
-      traefik_ingress_node_address:
-        type: str
-        default: "{{ ansible_facts['default_ipv4']['address'] }}"
-        description:
-          - Address this node receives ingress traffic on. With more than one
-            ingress node, keepalived sends VRRP from it, adds the VIP to the
-            interface holding it, and checks that Traefik answers on port 443
-            there.
-      traefik_ingress_node_vip:
+      traefik_ingress_node_endpoint:
         type: str
         default: ""
         description:
-          - Virtual address the ingress nodes float between themselves, without
-            a prefix length, which is taken from the interface it is added to.
-          - Required with more than one ingress node. Ignored with one, which
-            is reached on its own address. Point DNS at the VIP once there is a
-            second.
-      traefik_ingress_node_vip_router_id:
-        type: int
-        default: 52
-        description:
-          - VRRP router ID, 1-255. Must differ from every other VRRP group on
-            the same network, including the control plane's.
+          - IP address clients reach the ingress at, such as a VIP floated
+            across the ingress nodes, a load balancer in front of them, or a
+            single node's own address. Traefik reports it in the status of
+            every Ingress it serves.
+          - Empty leaves the status without an address.
       traefik_ingress_node_certificates:
         type: list
         elements: dict

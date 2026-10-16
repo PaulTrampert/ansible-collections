@@ -903,7 +903,7 @@
     - name: Find the node holding the ingress VIP
       ansible.builtin.include_tasks: tasks/find_vip_holder.yml
       vars:
-        k8s_vip_address: "{{ traefik_ingress_node_vip }}"
+        k8s_vip_address: "{{ k8s_ingress_vip }}"
 
     - name: Check how many nodes hold the ingress VIP
       ansible.builtin.assert:
@@ -911,7 +911,7 @@
           - k8s_vip_holders | length == (1 if verify_ingress_floating else 0)
         fail_msg: >-
           Expected {{ 'exactly one node' if verify_ingress_floating else 'no node' }}
-          to hold {{ traefik_ingress_node_vip }}, got {{ k8s_vip_holders }}
+          to hold {{ k8s_ingress_vip }}, got {{ k8s_vip_holders }}
 
 - name: Verify the ingress
   hosts: control_plane[0]
@@ -922,8 +922,7 @@
     verify_ingress_namespace: verify-ingress
     verify_ingress_addresses: "{{ groups['ingress'] | map('extract', hostvars, 'ansible_host') | list }}"
     # Where clients reach the ingress: the VIP, or the only ingress node.
-    verify_ingress_endpoint: >-
-      {{ traefik_ingress_node_vip if groups['ingress'] | length > 1 else verify_ingress_addresses[0] }}
+    verify_ingress_endpoint: "{{ traefik_ingress_node_endpoint }}"
     verify_ingress_dashboard: "{{ hostvars[groups['ingress'][0]]['traefik_ingress_node_dashboard_enabled'] | default(false) }}"
     # The test CA's certificate, so that curl checks every certificate it is
     # served against it, names included.
@@ -1060,6 +1059,18 @@
           loop: [whoami.example.com, whoami.internal.example.com, ingress.example.com]
           register: verify_ingress_responses
           until: verify_ingress_responses.rc == 0 and 'Hostname:' in verify_ingress_responses.stdout
+          retries: 10
+          delay: 3
+          changed_when: false
+
+        # Read as JSON rather than with a jsonpath, whose quoting would not
+        # survive the way the command module splits its arguments.
+        - name: Read the standard Ingress's status
+          ansible.builtin.command: kubectl get ingress whoami -n {{ verify_ingress_namespace }} -o json
+          register: verify_ingress_status
+          until: >-
+            (verify_ingress_status.stdout | from_json).status.loadBalancer.ingress
+            | default([]) | map(attribute='ip') | list == [verify_ingress_endpoint]
           retries: 10
           delay: 3
           changed_when: false

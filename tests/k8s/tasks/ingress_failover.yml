@@ -9,13 +9,13 @@
 - name: Find the node holding the ingress VIP
   ansible.builtin.include_tasks: tasks/find_vip_holder.yml
   vars:
-    k8s_vip_address: "{{ traefik_ingress_node_vip }}"
+    k8s_vip_address: "{{ k8s_ingress_vip }}"
 
 - name: Check that exactly one node holds the ingress VIP to begin with
   ansible.builtin.assert:
     that:
       - k8s_vip_holders | length == 1
-    fail_msg: "Expected exactly one node to hold {{ traefik_ingress_node_vip }}, got {{ k8s_vip_holders }}"
+    fail_msg: "Expected exactly one node to hold {{ k8s_ingress_vip }}, got {{ k8s_vip_holders }}"
 
 - name: Note which node to fail
   ansible.builtin.set_fact:
@@ -42,7 +42,7 @@
 - name: Wait for the route to serve on the VIP again  # noqa: command-instead-of-module
   ansible.builtin.command: >-
     curl --silent --insecure --max-time 5
-    --resolve whoami.example.com:443:{{ traefik_ingress_node_vip }} https://whoami.example.com/
+    --resolve whoami.example.com:443:{{ k8s_ingress_vip }} https://whoami.example.com/
   delegate_to: "{{ groups['control_plane'][0] }}"
   run_once: true
   register: ingress_failover_response
@@ -54,7 +54,7 @@
 - name: Find the node holding the ingress VIP now
   ansible.builtin.include_tasks: tasks/find_vip_holder.yml
   vars:
-    k8s_vip_address: "{{ traefik_ingress_node_vip }}"
+    k8s_vip_address: "{{ k8s_ingress_vip }}"
 
 - name: Check that the ingress VIP moved to another node
   ansible.builtin.assert:
@@ -62,7 +62,7 @@
       - k8s_vip_holders | length == 1
       - k8s_vip_holders[0] != ingress_failover_from
     fail_msg: >-
-      Expected {{ traefik_ingress_node_vip }} to move off {{ ingress_failover_from }},
+      Expected {{ k8s_ingress_vip }} to move off {{ ingress_failover_from }},
       held by {{ k8s_vip_holders }}
 
 - name: Give Traefik back to {{ ingress_failover_from }}
@@ -86,7 +86,7 @@
   ansible.builtin.command: ip -json -4 address show dev {{ k8s_interface }}
   register: ingress_failover_addresses
   until: >-
-    traefik_ingress_node_vip in (ingress_failover_addresses.stdout | from_json
+    k8s_ingress_vip in (ingress_failover_addresses.stdout | from_json
                                  | map(attribute='addr_info') | flatten | map(attribute='local'))
   retries: 40
   delay: 3

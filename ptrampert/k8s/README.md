@@ -14,7 +14,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
 | `ptrampert.k8s.k8up` | one control-plane node | The K8up backup operator, which backs up volumes and database dumps to restic repositories. |
 | `ptrampert.k8s.cert_manager` | one control-plane node | cert-manager, with `ClusterIssuer`s for Let's Encrypt's staging and production directories that solve DNS-01 through any provider cert-manager supports. |
-| `ptrampert.k8s.traefik_ingress_node` | `ingress` | Makes the hosts ingress nodes: Traefik on ports 80 and 443 of each, wildcard certificates from cert-manager, and a VIP floated between them when there is more than one. |
+| `ptrampert.k8s.traefik_ingress_node` | `ingress` | Makes the hosts ingress nodes: Traefik on ports 80 and 443 of each, wildcard certificates from cert-manager, with the address clients reach them at reported in each `Ingress`'s status. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -26,7 +26,7 @@ The roles expect these groups:
 
 - `control_plane`: control-plane nodes. The first host in the group creates the cluster; the rest join it.
 - `workers`: worker nodes (may be empty for a single-node cluster).
-- `ingress`: the nodes that take ingress traffic, control-plane nodes or workers. Only needed with `ptrampert.k8s.traefik_ingress_node`.
+- `ingress`: the nodes that take ingress traffic, control-plane nodes or workers. Only needed with `ptrampert.k8s.traefik_ingress_node`; the role itself is applied to whatever hosts the play names.
 - A parent group containing both, used to run `ptrampert.k8s.node` (e.g. `k8s_cluster`).
 
 ## The API server address
@@ -530,30 +530,70 @@ Traefik runs as a DaemonSet on the labelled nodes and nowhere else, and takes po
 the node itself. It tolerates the control-plane taint, so a control-plane node in the group serves
 ingress like any other: the label decides, not the taint.
 
-Run the role against the whole group, as with the control plane: every ingress node needs the
-addresses of the others, and the role refuses to run if part of the group is missing from the play.
-
 ### Reaching the ingress
 
-With one ingress node, clients reach it on its own address. It gets no keepalived: with nothing to
-fail over to, that would only be one more thing that can fail.
-
-With two or more, they float `traefik_ingress_node_vip` between them with keepalived, the same way
-the control plane floats the API server's address. keepalived checks that the local Traefik
-answers on port 443, so the VIP only ever sits on a node whose Traefik is serving, and moves when it
-stops. There is no HAProxy in front: every node that can hold the VIP is already running Traefik on
-443 itself.
+The role gets no traffic to the ingress nodes itself; the playbook decides how clients reach them.
+Tell the role the address they use, so Traefik can report it in each `Ingress`'s status:
 
 ```yaml
-traefik_ingress_node_vip: 192.0.2.20
+traefik_ingress_node_endpoint: 192.0.2.20
+```
+
+With one ingress node, clients reach it on its own address, and nothing else is needed. keepalived
+would only be one more thing that can fail, with nothing to fail over to.
+
+With two or more, float a VIP between them with `ptrampert.general_services.keepalived`. Checking
+that the local Traefik answers on port 443 means the VIP only ever sits on a node whose Traefik is
+serving, and moves when it stops. No HAProxy is needed: every node that can hold the VIP is already
+running Traefik on 443 itself.
+
+```yaml
+# group_vars/ingress.yml
+ingress_vip: 192.0.2.20
+traefik_ingress_node_endpoint: "{{ ingress_vip }}"
+# Each host's own address on the network the VIP is on, in host_vars:
+# ingress_address: 192.0.2.21
+```
+
+```yaml
+- name: Float the ingress address across the ingress nodes
+  hosts: ingress
+  become: true
+  vars:
+    # Keeps these instances apart from any other service's on the same host,
+    # such as the API server's VIP on a control-plane node.
+    keepalived_config_name: traefik-ingress
+    keepalived_scripts:
+      chk_traefik_ingress:
+        command: "/bin/bash -c '</dev/tcp/{{ ingress_address }}/443'"
+        interval: 2
+        timeout: 2
+        fall: 2
+        rise: 2
+    keepalived_vrrp_instances:
+      - name: traefik-ingress
+        interface: eth0
+        # BACKUP everywhere: let the election decide rather than have a node
+        # claim the address before its Traefik is up.
+        state: BACKUP
+        # Different from every other VRRP group on the network, such as an API
+        # server VIP's.
+        virtual_router_id: 52
+        priority: "{{ 150 - groups['ingress'].index(inventory_hostname) }}"
+        virtual_ipaddresses: ["{{ ingress_vip }}/24"]
+        unicast_src_ip: "{{ ingress_address }}"
+        unicast_peers: >-
+          {{ groups['ingress'] | reject('eq', inventory_hostname)
+             | map('extract', hostvars, 'ingress_address') | list }}
+        track_scripts: [chk_traefik_ingress]
+  roles:
+    - ptrampert.general_services.keepalived
 ```
 
 Point DNS at the VIP, or at the only ingress node. Unlike the API server's address, nothing in the
 cluster depends on it, so a single ingress node can become two later: add the second host to the
-group, set `traefik_ingress_node_vip`, run the playbook, and repoint DNS at the VIP.
-
-The VIP uses VRRP router ID 52 (`traefik_ingress_node_vip_router_id`), next to the control plane's
-51. Both can run on the same node; each keeps its own keepalived instance.
+group, add the play above, set `traefik_ingress_node_endpoint` to the VIP, run the playbook, and
+repoint DNS at the VIP.
 
 ### Certificates
 
@@ -654,9 +694,10 @@ stops Traefik there:
 kubectl label node <node> node-role.kubernetes.io/ingress-
 ```
 
-If the group had more than one node, delete `/etc/keepalived/fragments.d/10-traefik-ingress.conf`
-on the host and run the playbook, so that it stops competing for the VIP. If the group has one node
-left, do the same on that node, and point DNS at its own address.
+If the ingress nodes share a VIP as above, also delete
+`/etc/keepalived/fragments.d/10-traefik-ingress.conf` on the host and run the playbook, so that it
+stops competing for the VIP. If the group has one node left, do the same on that node, drop the
+play, and point DNS and `traefik_ingress_node_endpoint` at the node's own address.
 
 ## Example playbook
 
@@ -708,8 +749,8 @@ left, do the same on that node, and point DNS at its own address.
     # Needs cert_manager_dns01 and cert_manager_dns01_credential.
     - ptrampert.k8s.cert_manager
 
-# The whole group at once. Needs traefik_ingress_node_certificates, and
-# traefik_ingress_node_vip with more than one ingress node.
+# Needs traefik_ingress_node_certificates. With more than one ingress node,
+# follow it with a play floating a VIP between them: see "Reaching the ingress".
 - name: Make the ingress nodes
   hosts: ingress
   become: true

@@ -1,16 +1,6 @@
 ---
-# Set as a fact rather than read from defaults, so that every host in the play
-# can look up the others through hostvars.
-- name: Record how this node is reached
-  ansible.builtin.set_fact:
-    traefik_ingress_node_host_address: "{{ traefik_ingress_node_address }}"
-
 - name: Check the ingress configuration
   ansible.builtin.import_tasks: validate.yml
 
 - name: Configure the cluster through the control plane
   ansible.builtin.import_tasks: cluster.yml
-
-- name: Float the ingress address across the ingress nodes
-  ansible.builtin.import_tasks: keepalived.yml
-  when: traefik_ingress_node_floating | bool

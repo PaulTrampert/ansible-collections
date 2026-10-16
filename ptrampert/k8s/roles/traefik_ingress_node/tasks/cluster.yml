@@ -1,7 +1,7 @@
 ---
 # Everything here goes through the API server from the control-plane host,
 # which has the admin kubeconfig and helm. The parts that concern the whole
-# cluster rather than one node run once for the group.
+# cluster rather than one node run once for all the hosts.
 
 # kubernetes.core.k8s needs the Python client. The distribution's package is
 # older than kubernetes.core supports, so the client comes from PyPI, into a
@@ -26,7 +26,7 @@
   vars:
     ansible_python_interpreter: "{{ traefik_ingress_node_venv }}/bin/python"
   block:
-    # Removing a host from the group leaves the label in place; the README
+    # Leaving a host out of later runs leaves the label in place; the README
     # says how to take it off.
     - name: Label the node as an ingress node
       kubernetes.core.k8s:
@@ -91,7 +91,9 @@
         create_namespace: true
         kubeconfig: "{{ traefik_ingress_node_kubeconfig }}"
         skip_crds: true
-        values: "{{ traefik_ingress_node_values }}"
+        values: >-
+          {{ traefik_ingress_node_values
+             | combine(traefik_ingress_node_endpoint_values, recursive=true) }}
         wait: true
       run_once: true
 

@@ -242,10 +242,43 @@
       ansible.builtin.command: kubectl wait clusterissuer/verify-ca --for=condition=Ready --timeout=120s
       changed_when: false
 
-# The whole group at once: with more than one ingress node, each needs the
-# addresses of the others.
 - name: Make the ingress nodes
   hosts: ingress
   become: true
   roles:
     - ptrampert.k8s.traefik_ingress_node
+
+# With more than one ingress node, a VIP floats between them, held only by a
+# node whose Traefik answers on 443. A lone ingress node is reached on its own
+# address and gets no keepalived. On a control-plane node this is a second
+# application of keepalived beside the API server's, under a name of its own.
+- name: Float the ingress address across the ingress nodes
+  hosts: ingress
+  become: true
+  tasks:
+    - name: Float the ingress address
+      ansible.builtin.include_role:
+        name: ptrampert.general_services.keepalived
+      when: groups['ingress'] | length > 1
+      vars:
+        keepalived_config_name: traefik-ingress
+        keepalived_scripts:
+          chk_traefik_ingress:
+            command: "/bin/bash -c '</dev/tcp/{{ ansible_host }}/443'"
+            interval: 2
+            timeout: 2
+            fall: 2
+            rise: 2
+        keepalived_vrrp_instances:
+          - name: traefik-ingress
+            interface: "{{ k8s_interface }}"
+            state: BACKUP
+            virtual_router_id: 52
+            priority: "{{ 150 - groups['ingress'].index(inventory_hostname) }}"
+            virtual_ipaddresses: ["{{ k8s_ingress_vip }}/24"]
+            unicast_src_ip: "{{ ansible_host }}"
+            unicast_peers: >-
+              {{ groups['ingress'] | reject('eq', inventory_hostname)
+                 | map('extract', hostvars, 'ansible_host') | list }}
+            track_scripts:
+              - chk_traefik_ingress

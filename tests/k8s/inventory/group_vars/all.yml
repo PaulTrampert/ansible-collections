@@ -70,10 +70,13 @@ cert_manager_dns01:
 cert_manager_dns01_credential:
   tsig-secret: dmVyaWZ5LXRzaWctc2VjcmV0
 
-# The ingress VIP, floated between the ingress nodes in the topologies that have
-# more than one. The single-ingress topologies ignore it.
-traefik_ingress_node_address: "{{ ansible_host }}"
-traefik_ingress_node_vip: 192.168.56.7
+# The ingress VIP, which playbook.yml floats between the ingress nodes in the
+# topologies that have more than one. The others are reached on the only ingress
+# node's address.
+k8s_ingress_vip: 192.168.56.7
+traefik_ingress_node_endpoint: >-
+  {{ k8s_ingress_vip if groups['ingress'] | length > 1
+     else hostvars[groups['ingress'][0]]['ansible_host'] }}
 
 # The VMs have no public domain, so the ingress certificates come from a CA
 # that playbook.yml creates in cert-manager, rather than from Let's Encrypt.

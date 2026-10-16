@@ -1,25 +1,13 @@
 ---
-# Inventory group holding the ingress nodes: the hosts this role is applied
-# to. keepalived and the Traefik pods are both placed from it.
-traefik_ingress_node_group: ingress
-
 # Control-plane host the role talks to the cluster through: it labels the
 # nodes and installs Traefik from there.
 traefik_ingress_node_control_plane_host: "{{ groups['control_plane'][0] }}"
 
-# Address the node receives ingress traffic on. With more than one ingress
-# node, keepalived sends VRRP from it and adds the VIP to the interface that
-# holds it.
-traefik_ingress_node_address: "{{ ansible_facts['default_ipv4']['address'] }}"
-
-# Virtual address the ingress nodes float between themselves, without a prefix
-# length (e.g. "192.0.2.20"). Required with more than one ingress node, and
-# ignored with one, which is reached on its own address.
-traefik_ingress_node_vip: ""
-
-# VRRP router ID, 1-255. Must differ from every other VRRP group on the same
-# network, including the control plane's (control_plane_vip_router_id, 51).
-traefik_ingress_node_vip_router_id: 52
+# IP address clients reach the ingress at: a VIP floated across the ingress
+# nodes, a load balancer in front of them, or a single node's own address.
+# Traefik reports it in the status of every Ingress it serves. Empty leaves the
+# status without an address.
+traefik_ingress_node_endpoint: ""
 
 # Certificates Traefik serves, selected by SNI. Each entry becomes a
 # cert-manager Certificate in traefik_ingress_node_namespace and goes into
