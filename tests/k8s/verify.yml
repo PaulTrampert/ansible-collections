@@ -184,9 +184,9 @@
     verify_nfs_class: "{{ nfs_provisioner_storage_class_name | default('nfs') }}"
     verify_nfs_writer_node: "{{ groups['workers'][0] | default('') }}"
     verify_nfs_reader_node: "{{ groups['workers'][-1] | default('') }}"
-    # Empty without an NFS server. delegate_to is templated even for a task
-    # its block's when skips, so it can't index the group directly.
-    verify_nfs_server: "{{ groups['nfs_servers'] | first | default('') }}"
+    # delegate_to is templated, and has to name a host, even for a task its
+    # block's when skips. Without an NFS server, this host stands in for one.
+    verify_nfs_server: "{{ groups['nfs_servers'] | first | default(inventory_hostname) }}"
   tasks:
     # Only the multi topology has an NFS server, and it is also the only one
     # with two workers to move a volume between.
