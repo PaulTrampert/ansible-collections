@@ -34,3 +34,56 @@ control_plane_helm_archive: helm-{{ control_plane_helm_version }}-linux-{{ contr
 control_plane_flannel_args: >-
   {{ ['--ip-masq', '--kube-subnet-mgr']
      + (['--iface=' ~ control_plane_flannel_iface] if control_plane_flannel_iface else []) }}
+
+# The upgrade. Targets are what ptrampert.k8s.node recorded on each host.
+control_plane_upgrade_targets: >-
+  {{ groups[control_plane_group] | select('in', ansible_play_hosts)
+     | map('extract', hostvars, ['ansible_local', 'ptrampert_k8s_node', 'kubernetes_version'])
+     | list }}
+control_plane_upgrade_version: "{{ ansible_local['ptrampert_k8s_node']['kubernetes_version'] }}"
+control_plane_upgrade_previous_minor: >-
+  {{ control_plane_upgrade_version.split('.')[0] }}.{{ control_plane_upgrade_version.split('.')[1] | int - 1 }}
+
+control_plane_cluster_version: >-
+  {{ (control_plane_cluster_configuration.stdout | from_yaml)['kubernetesVersion'] | regex_replace('^v', '') }}
+
+# Node name to kubelet version, and the same with the control plane's own
+# version under "the control plane".
+control_plane_cluster_kubelets: >-
+  {{ dict((control_plane_cluster_nodes.stdout | from_json)['items'] | map(attribute='metadata.name')
+          | zip((control_plane_cluster_nodes.stdout | from_json)['items']
+                | map(attribute='status.nodeInfo.kubeletVersion') | map('regex_replace', '^v', ''))) }}
+control_plane_cluster_versions: >-
+  {{ control_plane_cluster_kubelets | combine({'the control plane': control_plane_cluster_version}) }}
+
+# What the skew check refuses: anything newer than the target, anything more
+# than one minor version behind it, and a kubelet newer than the control plane.
+control_plane_upgrade_ahead: >-
+  {{ control_plane_cluster_versions | dict2items
+     | selectattr('value', 'version', control_plane_upgrade_version, '>')
+     | map(attribute='key') | list }}
+control_plane_upgrade_too_far: >-
+  {{ control_plane_cluster_versions | dict2items
+     | selectattr('value', 'version', control_plane_upgrade_previous_minor ~ '.0', '<')
+     | map(attribute='key') | list }}
+control_plane_upgrade_unexplained: >-
+  {{ control_plane_cluster_kubelets | dict2items
+     | selectattr('value', 'version', control_plane_cluster_version, '>')
+     | map(attribute='key') | list }}
+
+# The node upgrade_node.yml is upgrading, and which of its packages are already
+# at the target: the Kubernetes packages at its version, containerd in its
+# series.
+control_plane_upgrade_node: "{{ hostvars[control_plane_upgrade_host]['ansible_facts']['nodename'] | lower }}"
+control_plane_upgrade_installed: "{{ hostvars[control_plane_upgrade_host]['ansible_facts']['packages'] }}"
+control_plane_upgrade_series: >-
+  {{ hostvars[control_plane_upgrade_host]['ansible_local']['ptrampert_k8s_node']['containerd_series'] }}
+control_plane_upgrade_packages:
+  kubeadm: "{{ control_plane_upgrade_installed['kubeadm'][0]['version'].startswith(control_plane_upgrade_version ~ '-') }}"
+  kubelet: "{{ control_plane_upgrade_installed['kubelet'][0]['version'].startswith(control_plane_upgrade_version ~ '-') }}"
+  kubectl: "{{ control_plane_upgrade_installed['kubectl'][0]['version'].startswith(control_plane_upgrade_version ~ '-') }}"
+  containerd.io: "{{ control_plane_upgrade_installed['containerd.io'][0]['version'].startswith(control_plane_upgrade_series ~ '.') }}"
+
+# Marks a node this role cordoned for its upgrade.
+control_plane_upgrade_annotation: ptrampert.k8s/upgrading
+control_plane_upgrade_drain_timeout: 5m

@@ -1,0 +1,145 @@
+---
+# One worker, worker_upgrade_host: kubectl on worker_control_plane_host,
+# everything else on the worker, both by delegation.
+# Every step checks the node's state first, so a run that stopped part way
+# resumes where it left off.
+- name: Read node {{ worker_upgrade_host }}
+  ansible.builtin.command: kubectl get node {{ worker_upgrade_node }} --output json
+  delegate_to: "{{ worker_control_plane_host }}"
+  environment:
+    KUBECONFIG: "{{ worker_kubeconfig }}"
+  register: worker_upgrade_node_object
+  changed_when: false
+
+- name: Upgrade node {{ worker_upgrade_host }}
+  when: worker_upgrade_pending or worker_upgrade_marked
+  environment:
+    KUBECONFIG: "{{ worker_kubeconfig }}"
+  vars:
+    worker_upgrade_node_json: "{{ worker_upgrade_node_object.stdout | from_json }}"
+    # Annotated when this role cordoned the node, so that only those nodes are
+    # uncordoned again, and an operator's own cordon stays.
+    worker_upgrade_marked: >-
+      {{ worker_upgrade_annotation in worker_upgrade_node_json['metadata'].get('annotations', {}) }}
+    worker_upgrade_was_cordoned: >-
+      {{ worker_upgrade_node_json['spec'].get('unschedulable', false) }}
+    worker_upgrade_ours: >-
+      {{ worker_upgrade_marked or not worker_upgrade_was_cordoned }}
+    worker_upgrade_kubelet_running: >-
+      {{ worker_upgrade_node_json['status']['nodeInfo']['kubeletVersion'] }}
+    worker_upgrade_pending: >-
+      {{ worker_upgrade_packages.values() | reject | list | length > 0
+         or worker_upgrade_kubelet_running != 'v' ~ worker_upgrade_version }}
+  block:
+    - name: Upgrade kubeadm on {{ worker_upgrade_host }}
+      ansible.builtin.apt:
+        name: kubeadm={{ worker_upgrade_version }}-*
+        state: present
+        allow_change_held_packages: true
+      delegate_to: "{{ worker_upgrade_host }}"
+      when: not worker_upgrade_packages['kubeadm']
+
+    # Rewrites the kubelet configuration for the cluster's new version. Safe
+    # to repeat, so a run that stopped before the kubelet was upgraded runs it
+    # again.
+    - name: Run kubeadm upgrade node on {{ worker_upgrade_host }}
+      ansible.builtin.command: kubeadm upgrade node
+      delegate_to: "{{ worker_upgrade_host }}"
+      when: not worker_upgrade_packages['kubelet']
+      changed_when: true
+
+    # Before cordoning, so a run that stops in between still finds the mark.
+    - name: Annotate {{ worker_upgrade_host }}
+      ansible.builtin.command: >-
+        kubectl annotate node {{ worker_upgrade_node }}
+        {{ worker_upgrade_annotation }}=true
+      delegate_to: "{{ worker_control_plane_host }}"
+      when:
+        - not worker_upgrade_was_cordoned
+        - not worker_upgrade_marked
+      changed_when: true
+
+    - name: Cordon {{ worker_upgrade_host }}
+      ansible.builtin.command: kubectl cordon {{ worker_upgrade_node }}
+      delegate_to: "{{ worker_control_plane_host }}"
+      when: not worker_upgrade_was_cordoned
+      changed_when: true
+
+    # DaemonSet pods, such as an ingress controller's, stay where they are.
+    - name: Drain {{ worker_upgrade_host }}
+      when:
+        - worker_drain_on_upgrade
+        - worker_upgrade_pending
+      block:
+        - name: Evict the pods on {{ worker_upgrade_host }}
+          ansible.builtin.command: >-
+            kubectl drain {{ worker_upgrade_node }}
+            --ignore-daemonsets --delete-emptydir-data
+            --timeout={{ worker_upgrade_drain_timeout }}
+          delegate_to: "{{ worker_control_plane_host }}"
+          register: worker_upgrade_drain
+          changed_when: true
+      rescue:
+        - name: Explain a drain that did not finish
+          ansible.builtin.fail:
+            msg: >-
+              {{ worker_upgrade_node }} did not drain within
+              {{ worker_upgrade_drain_timeout }}, usually because a
+              PodDisruptionBudget would not let a pod be evicted. The node stays
+              cordoned; once the pods below can be evicted, running the role
+              again resumes the upgrade from this node.
+              {{ worker_upgrade_drain.stderr }}
+
+    # Running containers stay up: containerd's shims outlive the daemon's
+    # restart. apt's pin from ptrampert.k8s.node selects the series, so the
+    # latest version apt offers is the newest in it.
+    - name: Move containerd to its new series on {{ worker_upgrade_host }}  # noqa: package-latest
+      ansible.builtin.apt:
+        name: containerd.io
+        state: latest
+      delegate_to: "{{ worker_upgrade_host }}"
+      when: not worker_upgrade_packages['containerd.io']
+
+    - name: Upgrade kubelet and kubectl on {{ worker_upgrade_host }}
+      ansible.builtin.apt:
+        name:
+          - kubelet={{ worker_upgrade_version }}-*
+          - kubectl={{ worker_upgrade_version }}-*
+        state: present
+        allow_change_held_packages: true
+      delegate_to: "{{ worker_upgrade_host }}"
+      when: not (worker_upgrade_packages['kubelet'] and worker_upgrade_packages['kubectl'])
+
+    # Inline rather than a handler: the kubelet has to be running the new
+    # version before the node is uncordoned, within this node's turn.
+    - name: Restart the kubelet on {{ worker_upgrade_host }}
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: restarted
+        daemon_reload: true
+      delegate_to: "{{ worker_upgrade_host }}"
+      when: worker_upgrade_kubelet_running != 'v' ~ worker_upgrade_version
+
+    - name: Wait for the new kubelet on {{ worker_upgrade_host }}
+      ansible.builtin.command: >-
+        kubectl wait node/{{ worker_upgrade_node }} --timeout=300s
+        --for=jsonpath={.status.nodeInfo.kubeletVersion}=v{{ worker_upgrade_version }}
+      delegate_to: "{{ worker_control_plane_host }}"
+      changed_when: false
+
+    - name: Wait for Ready on {{ worker_upgrade_host }}
+      ansible.builtin.command: kubectl wait node/{{ worker_upgrade_node }} --for=condition=Ready --timeout=300s
+      delegate_to: "{{ worker_control_plane_host }}"
+      changed_when: false
+
+    - name: Uncordon {{ worker_upgrade_host }}
+      ansible.builtin.command: kubectl uncordon {{ worker_upgrade_node }}
+      delegate_to: "{{ worker_control_plane_host }}"
+      when: worker_upgrade_ours
+      changed_when: true
+
+    - name: Remove the upgrade mark from {{ worker_upgrade_host }}
+      ansible.builtin.command: kubectl annotate node {{ worker_upgrade_node }} {{ worker_upgrade_annotation }}-
+      delegate_to: "{{ worker_control_plane_host }}"
+      when: worker_upgrade_ours
+      changed_when: true

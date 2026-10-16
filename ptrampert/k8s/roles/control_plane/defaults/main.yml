@@ -33,3 +33,9 @@ control_plane_flannel_version: "v0.28.9"
 # Interface Flannel uses for traffic between nodes. Empty means the interface
 # with the default route.
 control_plane_flannel_iface: ""
+
+# Drain each control-plane node before upgrading its kubelet. Off, a node is
+# only cordoned: restarting the kubelet leaves its running containers alone,
+# and draining a node whose pods have nowhere else to go, such as the only node,
+# stops every workload until it is uncordoned.
+control_plane_drain_on_upgrade: false

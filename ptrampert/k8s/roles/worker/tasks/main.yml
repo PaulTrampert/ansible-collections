@@ -4,6 +4,10 @@
     path: /etc/kubernetes/kubelet.conf
   register: worker_kubelet_conf
 
+# Before the join: a worker joining now already has the target version.
+- name: Upgrade the workers to the target version
+  ansible.builtin.import_tasks: upgrade.yml
+
 - name: Join the cluster
   when: not worker_kubelet_conf.stat.exists
   block:
@@ -25,5 +29,5 @@
   ansible.builtin.command: kubectl wait --for=condition=Ready node/{{ ansible_facts['nodename'] | lower }} --timeout=300s
   delegate_to: "{{ worker_control_plane_host }}"
   environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+    KUBECONFIG: "{{ worker_kubeconfig }}"
   changed_when: false

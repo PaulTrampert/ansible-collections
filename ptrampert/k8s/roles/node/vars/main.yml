@@ -14,3 +14,9 @@ node_sysctls:
   net.bridge.bridge-nf-call-iptables: 1
   net.bridge.bridge-nf-call-ip6tables: 1
   net.ipv4.ip_forward: 1
+
+# Written to /etc/ansible/facts.d/ptrampert_k8s_node.fact for the roles that
+# upgrade the node.
+node_local_facts:
+  kubernetes_version: "{{ node_kubernetes_version }}"
+  containerd_series: "{{ node_containerd_series }}"

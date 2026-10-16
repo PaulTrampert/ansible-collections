@@ -1,0 +1,146 @@
+---
+# One control-plane node, control_plane_upgrade_host, from the first
+# control-plane node: kubectl runs here, everything on the node by delegation.
+# Every step checks the node's state first, so a run that stopped part way
+# resumes where it left off.
+- name: Read node {{ control_plane_upgrade_host }}
+  ansible.builtin.command: kubectl get node {{ control_plane_upgrade_node }} --output json
+  register: control_plane_upgrade_node_object
+  changed_when: false
+
+- name: Upgrade node {{ control_plane_upgrade_host }}
+  when: control_plane_upgrade_pending or control_plane_upgrade_marked
+  vars:
+    control_plane_upgrade_node_json: "{{ control_plane_upgrade_node_object.stdout | from_json }}"
+    # Annotated when this role cordoned the node, so that only those nodes are
+    # uncordoned again, and an operator's own cordon stays.
+    control_plane_upgrade_marked: >-
+      {{ control_plane_upgrade_annotation in control_plane_upgrade_node_json['metadata'].get('annotations', {}) }}
+    control_plane_upgrade_was_cordoned: >-
+      {{ control_plane_upgrade_node_json['spec'].get('unschedulable', false) }}
+    control_plane_upgrade_ours: >-
+      {{ control_plane_upgrade_marked or not control_plane_upgrade_was_cordoned }}
+    control_plane_upgrade_kubelet_running: >-
+      {{ control_plane_upgrade_node_json['status']['nodeInfo']['kubeletVersion'] }}
+    control_plane_upgrade_pending: >-
+      {{ control_plane_upgrade_packages.values() | reject | list | length > 0
+         or control_plane_upgrade_kubelet_running != 'v' ~ control_plane_upgrade_version
+         or (control_plane_upgrade_host == control_plane_first
+             and control_plane_cluster_version != control_plane_upgrade_version) }}
+  block:
+    - name: Upgrade kubeadm on {{ control_plane_upgrade_host }}
+      ansible.builtin.apt:
+        name: kubeadm={{ control_plane_upgrade_version }}-*
+        state: present
+        allow_change_held_packages: true
+      delegate_to: "{{ control_plane_upgrade_host }}"
+      when: not control_plane_upgrade_packages['kubeadm']
+
+    # Upgrades this node's control-plane components and the cluster's
+    # configuration. Skipped once the cluster records the target version.
+    - name: Run kubeadm upgrade apply
+      ansible.builtin.command: kubeadm upgrade apply v{{ control_plane_upgrade_version }} --yes
+      when:
+        - control_plane_upgrade_host == control_plane_first
+        - control_plane_cluster_version != control_plane_upgrade_version
+      changed_when: true
+
+    # Rewrites the node's control-plane manifests and kubelet configuration for
+    # the version kubeadm upgrade apply moved the cluster to. Safe to repeat,
+    # so a run that stopped before the kubelet was upgraded runs it again.
+    - name: Run kubeadm upgrade node on {{ control_plane_upgrade_host }}
+      ansible.builtin.command: kubeadm upgrade node
+      delegate_to: "{{ control_plane_upgrade_host }}"
+      when:
+        - control_plane_upgrade_host != control_plane_first
+        - not control_plane_upgrade_packages['kubelet']
+      changed_when: true
+
+    # Before cordoning, so a run that stops in between still finds the mark.
+    - name: Annotate {{ control_plane_upgrade_host }}
+      ansible.builtin.command: >-
+        kubectl annotate node {{ control_plane_upgrade_node }}
+        {{ control_plane_upgrade_annotation }}=true
+      when:
+        - not control_plane_upgrade_was_cordoned
+        - not control_plane_upgrade_marked
+      changed_when: true
+
+    - name: Cordon {{ control_plane_upgrade_host }}
+      ansible.builtin.command: kubectl cordon {{ control_plane_upgrade_node }}
+      when: not control_plane_upgrade_was_cordoned
+      changed_when: true
+
+    # DaemonSet pods, such as an ingress controller's, stay where they are.
+    - name: Drain {{ control_plane_upgrade_host }}
+      when:
+        - control_plane_drain_on_upgrade
+        - control_plane_upgrade_pending
+      block:
+        - name: Evict the pods on {{ control_plane_upgrade_host }}
+          ansible.builtin.command: >-
+            kubectl drain {{ control_plane_upgrade_node }}
+            --ignore-daemonsets --delete-emptydir-data
+            --timeout={{ control_plane_upgrade_drain_timeout }}
+          register: control_plane_upgrade_drain
+          changed_when: true
+      rescue:
+        - name: Explain a drain that did not finish
+          ansible.builtin.fail:
+            msg: >-
+              {{ control_plane_upgrade_node }} did not drain within
+              {{ control_plane_upgrade_drain_timeout }}, usually because a
+              PodDisruptionBudget would not let a pod be evicted. The node stays
+              cordoned; once the pods below can be evicted, running the role
+              again resumes the upgrade from this node.
+              {{ control_plane_upgrade_drain.stderr }}
+
+    # Running containers stay up: containerd's shims outlive the daemon's
+    # restart. apt's pin from ptrampert.k8s.node selects the series, so the
+    # latest version apt offers is the newest in it.
+    - name: Move containerd to its new series on {{ control_plane_upgrade_host }}  # noqa: package-latest
+      ansible.builtin.apt:
+        name: containerd.io
+        state: latest
+      delegate_to: "{{ control_plane_upgrade_host }}"
+      when: not control_plane_upgrade_packages['containerd.io']
+
+    - name: Upgrade kubelet and kubectl on {{ control_plane_upgrade_host }}
+      ansible.builtin.apt:
+        name:
+          - kubelet={{ control_plane_upgrade_version }}-*
+          - kubectl={{ control_plane_upgrade_version }}-*
+        state: present
+        allow_change_held_packages: true
+      delegate_to: "{{ control_plane_upgrade_host }}"
+      when: not (control_plane_upgrade_packages['kubelet'] and control_plane_upgrade_packages['kubectl'])
+
+    # Inline rather than a handler: the kubelet has to be running the new
+    # version before the node is uncordoned, within this node's turn.
+    - name: Restart the kubelet on {{ control_plane_upgrade_host }}
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: restarted
+        daemon_reload: true
+      delegate_to: "{{ control_plane_upgrade_host }}"
+      when: control_plane_upgrade_kubelet_running != 'v' ~ control_plane_upgrade_version
+
+    - name: Wait for the new kubelet on {{ control_plane_upgrade_host }}
+      ansible.builtin.command: >-
+        kubectl wait node/{{ control_plane_upgrade_node }} --timeout=300s
+        --for=jsonpath={.status.nodeInfo.kubeletVersion}=v{{ control_plane_upgrade_version }}
+      changed_when: false
+
+    - name: Wait for Ready on {{ control_plane_upgrade_host }}
+      ansible.builtin.command: kubectl wait node/{{ control_plane_upgrade_node }} --for=condition=Ready --timeout=300s
+      changed_when: false
+
+    - name: Uncordon {{ control_plane_upgrade_host }}
+      ansible.builtin.command: kubectl uncordon {{ control_plane_upgrade_node }}
+      when: control_plane_upgrade_ours
+      changed_when: true
+
+    - name: Remove the upgrade mark from {{ control_plane_upgrade_host }}
+      ansible.builtin.command: kubectl annotate node {{ control_plane_upgrade_node }} {{ control_plane_upgrade_annotation }}-
+      when: control_plane_upgrade_ours
+      changed_when: true
