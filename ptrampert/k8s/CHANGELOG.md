@@ -7,10 +7,16 @@
 - `control_plane` supports more than one control-plane node. A node joins by being added
   to the `control_plane` group; control-plane nodes join one at a time.
 - `control_plane` gives every cluster a stable API server address, so a cluster that starts
-  with one control-plane node can grow more later. By default it runs HAProxy and keepalived
-  on the control-plane nodes themselves and floats `control_plane_vip` between them; set
-  `control_plane_load_balancer: external` with `control_plane_endpoint` to use a load
-  balancer outside the cluster instead.
+  with one control-plane node can grow more later. `control_plane_endpoint` is required, and
+  whatever serves it is set up by the playbook before the role runs; the README has a play
+  that runs HAProxy and keepalived on the control-plane nodes themselves.
+- `control_plane` no longer runs HAProxy and keepalived itself. `control_plane_load_balancer`,
+  `control_plane_vip`, `control_plane_vip_prefix`, `control_plane_vip_interface`,
+  `control_plane_vip_router_id`, `control_plane_lb_port` and `control_plane_lb_timeouts` are
+  gone. To keep a cluster that used them, apply `ptrampert.general_services.haproxy` and
+  `keepalived` in a play before `control_plane`, as in the README, with
+  `control_plane_endpoint` set to the VIP and port (`<vip>:8443` for the old defaults). The
+  collection no longer depends on `ptrampert.general_services`.
 - Add a `local_path_provisioner` role: a `StorageClass` backed by a directory on each node,
   provisioned by Rancher's local-path-provisioner. The directory, the class name, the reclaim
   policy and whether the class is the cluster default are all configurable; the class is not

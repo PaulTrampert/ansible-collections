@@ -10,10 +10,20 @@ control_plane_advertise_address: "{{ ansible_host }}"
 control_plane_flannel_iface: "{{ k8s_interface }}"
 control_plane_kubeconfig_users: [vagrant]
 
-# Address the API server answers on. The stacked topologies float it across the
-# control-plane nodes; external-lb ignores it and uses the HAProxy host.
+# Address the API server answers on. In the stacked topologies, playbook.yml
+# runs HAProxy on k8s_api_lb_port and floats k8s_api_vip across the
+# control-plane nodes with keepalived. external-lb sets k8s_api_endpoint to its
+# HAProxy host instead: this file outranks group vars set in an inventory file,
+# so it cannot override control_plane_endpoint directly.
 k8s_api_vip: 192.168.56.9
-control_plane_vip: "{{ k8s_api_vip }}"
+k8s_api_lb_port: 8443
+control_plane_endpoint: "{{ k8s_api_endpoint | default(k8s_api_vip ~ ':' ~ k8s_api_lb_port) }}"
+
+# How a load balancer reaches this node's API server, collected into its server
+# list. Inventory rather than play vars, so every host can read the others'.
+k8s_api_backend:
+  name: "{{ inventory_hostname }}"
+  address: "{{ ansible_host }}:6443"
 
 # The only storage provider in the test cluster, so claims that name no class
 # should get it. Exercises the role's default-class toggle.

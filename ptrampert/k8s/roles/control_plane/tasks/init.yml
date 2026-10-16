@@ -4,6 +4,25 @@
   register: control_plane_kubeadm_version
   changed_when: false
 
+# kubeadm init talks to the cluster through the endpoint as soon as the API
+# server is up, so whatever serves it has to be in place first.
+- name: Check that the API server endpoint is reachable
+  block:
+    - name: Connect to the API server endpoint
+      ansible.builtin.wait_for:
+        host: "{{ control_plane_endpoint_host }}"
+        port: "{{ control_plane_endpoint_port | int }}"
+        timeout: 30
+  rescue:
+    - name: Explain an unreachable API server endpoint
+      ansible.builtin.fail:
+        msg: >-
+          Nothing answers on {{ control_plane_endpoint_host }} port
+          {{ control_plane_endpoint_port }} (control_plane_endpoint). Whatever
+          serves the API server's endpoint, such as HAProxy and keepalived on
+          the control-plane nodes or a load balancer in front of them, has to
+          be set up before this role runs. See the collection README.
+
 # kubeadm reads this file only at init. Changing it afterwards has no effect
 # on the running cluster.
 - name: Write the kubeadm init configuration

@@ -11,7 +11,7 @@
     - name: Check that this cluster load balances for itself
       ansible.builtin.assert:
         that:
-          - (control_plane_load_balancer | default('stacked')) == 'stacked'
+          - inventory_hostname in groups['control_plane_lb']
         fail_msg: >-
           failover.yml tests the load balancer the control-plane nodes run for
           themselves, and this cluster uses one outside it.
@@ -46,7 +46,7 @@
     - name: Wait for the VIP to serve again
       ansible.builtin.wait_for:
         host: "{{ k8s_api_vip }}"
-        port: "{{ control_plane_lb_port | default(8443) }}"
+        port: "{{ k8s_api_lb_port }}"
         timeout: 60
       delegate_to: localhost
 

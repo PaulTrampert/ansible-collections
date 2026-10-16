@@ -18,6 +18,11 @@ k8s_cluster:
     nfs_provisioner_server: "{{ hostvars['nfs1']['ansible_host'] }}"
     nfs_provisioner_share: "{{ nfs_export_path }}"
 
+# The lone control-plane node floats the VIP alone, so it can grow.
+control_plane_lb:
+  children:
+    control_plane: {}
+
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}

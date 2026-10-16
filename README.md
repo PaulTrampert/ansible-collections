@@ -33,11 +33,10 @@ collections:
 ansible-galaxy collection install -r requirements.yml
 ```
 
-List `ptrampert.general_services` even if you only use `ptrampert.k8s`. The k8s collection depends
-on it, and `ansible-galaxy` only looks for dependencies on Galaxy, where it does not exist: without
-the git entry the install fails with `Could not satisfy the following requirements:
-ptrampert.general_services`. The other dependencies (`ansible.posix`, `kubernetes.core`) are on
-Galaxy and are installed automatically.
+The collections don't depend on each other: `ptrampert.k8s` roles never apply `haproxy` or
+`keepalived` themselves, so list `ptrampert.general_services` only if your playbooks use it, for
+example to load balance the API server (see the k8s README). The other dependencies
+(`ansible.posix`, `kubernetes.core`) are on Galaxy and are installed automatically.
 
 `version` takes a branch, a tag or a commit. Pin a tag or a commit for installs that do not change
 under you. Both collections live in one repository, so pinning one ref pins both.
@@ -45,8 +44,7 @@ under you. Both collections live in one repository, so pinning one ref pins both
 ## Versions and changes
 
 Each collection has its own version in its `galaxy.yml` and its own `CHANGELOG.md`. Nothing is
-published, but the version still matters: dependency constraints between the collections are
-checked against it.
+published, but the version still says what changed between two refs.
 
 The roles pin the upstream software they install. Renovate proposes newer releases weekly, one
 pull request per collection, and each one raises that collection's patch version. They are

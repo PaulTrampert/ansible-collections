@@ -1,6 +1,7 @@
 ---
 # Three control-plane nodes load balancing for themselves: HAProxy on each of
-# them, and keepalived floating k8s_api_vip between them. No workers, so the
+# them, and keepalived floating k8s_api_vip between them, both applied by
+# playbook.yml. No workers, so the
 # control-plane nodes are schedulable and the cluster has somewhere to run
 # verify.yml's test pod.
 k8s_cluster:
@@ -17,6 +18,11 @@ k8s_cluster:
       hosts: {}
   vars:
     control_plane_schedulable: true
+
+# The control-plane nodes load balance for themselves.
+control_plane_lb:
+  children:
+    control_plane: {}
 
 # Only the external-lb topology has a load balancer host.
 load_balancers:
