@@ -968,7 +968,7 @@
           {{ traefik_ingress_node_certificates | length }} certificates
 
     - name: Read the test CA's certificate
-      ansible.builtin.command: kubectl get secret verify-ca -n cert-manager -o jsonpath={.data.ca\.crt}
+      ansible.builtin.command: kubectl get secret verify-ca -n cert-manager -o 'jsonpath={.data.ca\.crt}'
       register: verify_ingress_ca_data
       changed_when: false
 
