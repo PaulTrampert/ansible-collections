@@ -24,7 +24,7 @@ Set `K8S_TOPOLOGY` for **every** `vagrant` command, including `destroy` — with
 
 ## The API server's load balancer
 
-`ptrampert.k8s.control_plane` only takes the API server's address, so `playbook.yml` sets up what serves it before the control plane, the way a real playbook would. In `single`, `multi` and `stacked-ha`, the control-plane nodes are in the `control_plane_lb` group. That play runs `ptrampert.general_services.haproxy` on port 8443 on each of them, balancing across every API server, and `ptrampert.general_services.keepalived` to float the VIP between them. In `external-lb` that group is empty, and `lb1`, in `load_balancers`, runs HAProxy on 6443 instead.
+`ptrampert.k8s.control_plane` only takes the API server's address, so `playbook.yml` sets up what serves it before the control plane, the way a real playbook would. In `single`, `multi` and `stacked-ha`, the control-plane nodes are in the `control_plane_lb` group. That play runs `ptrampert.general_services.haproxy` on port 8443 on each of them, balancing across every API server, and `ptrampert.general_services.keepalived`, under `keepalived_config_name: kube-apiserver`, to float the VIP between them. In `external-lb` that group is empty, and `lb1`, in `load_balancers`, runs HAProxy on 6443 instead.
 
 ## The ingress VIP
 
