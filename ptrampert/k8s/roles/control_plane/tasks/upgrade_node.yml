@@ -74,7 +74,7 @@
     # DaemonSet pods, such as an ingress controller's, stay where they are.
     - name: Drain {{ control_plane_upgrade_host }}
       when:
-        - control_plane_drain_on_upgrade
+        - control_plane_drain_on_upgrade | bool
         - control_plane_upgrade_pending
       block:
         - name: Evict the pods on {{ control_plane_upgrade_host }}

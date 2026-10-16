@@ -68,7 +68,7 @@
     # DaemonSet pods, such as an ingress controller's, stay where they are.
     - name: Drain {{ worker_upgrade_host }}
       when:
-        - worker_drain_on_upgrade
+        - worker_drain_on_upgrade | bool
         - worker_upgrade_pending
       block:
         - name: Evict the pods on {{ worker_upgrade_host }}
