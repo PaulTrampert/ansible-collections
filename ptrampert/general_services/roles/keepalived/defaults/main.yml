@@ -1,4 +1,9 @@
 ---
+# Names this application of the role. Each name keeps its own VRRP instances
+# and scripts, so the role can be applied for several services on one host
+# without one replacing the other's. Use letters, digits, and hyphens.
+keepalived_config_name: default
+
 # VRRP instances this host takes part in, each holding one or more virtual
 # addresses. See meta/argument_specs.yml for the shape of an entry.
 keepalived_vrrp_instances: []

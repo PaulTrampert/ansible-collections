@@ -24,9 +24,36 @@
     shell: /usr/sbin/nologin
   when: keepalived_script_user | length > 0
 
-- name: Write the keepalived configuration
+- name: Create the configuration fragment directory
+  ansible.builtin.file:
+    path: "{{ keepalived_fragment_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write the global settings
   ansible.builtin.template:
-    src: keepalived.conf.j2
+    src: global_defs.conf.j2
+    dest: "{{ keepalived_fragment_dir }}/00-global_defs.conf"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Write the scripts and instances of {{ keepalived_config_name }}
+  ansible.builtin.template:
+    src: instances.conf.j2
+    dest: "{{ keepalived_fragment_dir }}/10-{{ keepalived_config_name }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+
+# One file from every configuration applied to this host, so that applying the
+# role for one service leaves another's instances in place. Validated as a
+# whole, since a fragment on its own is not a complete configuration.
+- name: Assemble the keepalived configuration
+  ansible.builtin.assemble:
+    src: "{{ keepalived_fragment_dir }}"
     dest: "{{ keepalived_config_file }}"
     owner: root
     group: root
@@ -35,7 +62,7 @@
   notify: Reload keepalived
 
 # The package ships no configuration, so keepalived cannot have started before
-# the task above wrote one.
+# the tasks above wrote one.
 - name: Enable and start keepalived
   ansible.builtin.systemd_service:
     name: keepalived

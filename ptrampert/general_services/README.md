@@ -72,6 +72,11 @@ A few things worth knowing:
   redirect above needs no extra package; `pkill -0 haproxy` would fail, because the check cannot
   signal a root-owned process.
 - **`virtual_router_id` must be unique** among the VRRP instances on the same network.
+- **More than one service can float an address from the same host.** Apply `keepalived` once per
+  service, each time with its own `keepalived_config_name`: each name keeps its own instances and
+  scripts, and the role assembles all of them into one configuration. The global settings
+  (`keepalived_router_id`, `keepalived_script_user` and the like) are shared, so give them the
+  same values each time.
 - **Nothing opens the firewall.** VRRP (IP protocol 112) between the hosts, and the frontend port,
   have to be allowed however the network is managed.
 - **Server lists can follow an inventory group** instead of being written out, which is useful when
