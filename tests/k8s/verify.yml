@@ -184,6 +184,9 @@
     verify_nfs_class: "{{ nfs_provisioner_storage_class_name | default('nfs') }}"
     verify_nfs_writer_node: "{{ groups['workers'][0] | default('') }}"
     verify_nfs_reader_node: "{{ groups['workers'][-1] | default('') }}"
+    # delegate_to is templated, and has to name a host, even for a task its
+    # block's when skips. Without an NFS server, this host stands in for one.
+    verify_nfs_server: "{{ groups['nfs_servers'] | first | default(inventory_hostname) }}"
   tasks:
     # Only the multi topology has an NFS server, and it is also the only one
     # with two workers to move a volume between.
@@ -248,7 +251,7 @@
                 paths: "{{ nfs_export_path }}"
                 patterns: probe
                 recurse: true
-              delegate_to: "{{ groups['nfs_servers'][0] }}"
+              delegate_to: "{{ verify_nfs_server }}"
               register: verify_nfs_files
 
             - name: Check the volume was created on the export
@@ -257,7 +260,7 @@
                   - verify_nfs_files.files | length == 1
                 fail_msg: >-
                   Expected one volume under {{ nfs_export_path }} on
-                  {{ groups['nfs_servers'][0] }}, found
+                  {{ verify_nfs_server }}, found
                   {{ verify_nfs_files.files | map(attribute='path') | list }}
           always:
             - name: Remove the verification resources
