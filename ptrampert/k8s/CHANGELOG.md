@@ -39,3 +39,12 @@
   through the solver given in `cert_manager_dns01`, which takes any provider built into
   cert-manager, with the credential in `cert_manager_dns01_credential`. The role creates no
   certificates; they belong to whatever uses them.
+- Add a `traefik_ingress_node` role, which makes the hosts it is applied to ingress nodes: it
+  labels their nodes, and runs Traefik on them as a DaemonSet on host ports 80 and 443, with both
+  the `IngressRoute` and `Ingress` providers. Several ingress nodes float a VIP with keepalived,
+  held only by a node whose Traefik serves; a single one is reached on its own address. Wildcard
+  certificates, a list of them, are issued by cert-manager and served from Traefik's default
+  `TLSStore` by SNI. Plain HTTP redirects to HTTPS. The dashboard is off unless enabled behind
+  basic auth.
+- `control_plane` names its keepalived configuration `kube-apiserver`, so that it can share a
+  node with another service's.

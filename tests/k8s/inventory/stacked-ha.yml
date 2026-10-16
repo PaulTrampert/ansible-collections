@@ -24,6 +24,14 @@ control_plane_lb:
   children:
     control_plane: {}
 
+# Every control-plane node is an ingress node too, so each one runs two
+# keepalived instances side by side: the API server's and the ingress's.
+ingress:
+  hosts:
+    cp1:
+    cp2:
+    cp3:
+
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}

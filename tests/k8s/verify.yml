@@ -878,3 +878,312 @@
           ansible.builtin.command: >-
             kubectl delete namespace {{ verify_cert_manager_namespace }} --ignore-not-found --timeout=300s
           changed_when: true
+
+- name: Verify the ingress address
+  hosts: ingress
+  become: true
+  vars:
+    verify_ingress_floating: "{{ groups['ingress'] | length > 1 }}"
+  tasks:
+    - name: Read the ingress's keepalived configuration
+      ansible.builtin.stat:
+        path: /etc/keepalived/fragments.d/10-traefik-ingress.conf
+      register: verify_ingress_keepalived
+
+    # A lone ingress node has nothing to fail over to.
+    - name: Check keepalived floats the ingress address only across several nodes
+      ansible.builtin.assert:
+        that:
+          - verify_ingress_keepalived.stat.exists == verify_ingress_floating | bool
+        fail_msg: >-
+          {{ groups['ingress'] | length }} ingress nodes, and keepalived
+          {{ 'does not float' if verify_ingress_floating else 'floats' }} the
+          ingress address on {{ inventory_hostname }}
+
+    - name: Find the node holding the ingress VIP
+      ansible.builtin.include_tasks: tasks/find_vip_holder.yml
+      vars:
+        k8s_vip_address: "{{ traefik_ingress_node_vip }}"
+
+    - name: Check how many nodes hold the ingress VIP
+      ansible.builtin.assert:
+        that:
+          - k8s_vip_holders | length == (1 if verify_ingress_floating else 0)
+        fail_msg: >-
+          Expected {{ 'exactly one node' if verify_ingress_floating else 'no node' }}
+          to hold {{ traefik_ingress_node_vip }}, got {{ k8s_vip_holders }}
+
+- name: Verify the ingress
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  vars:
+    verify_ingress_namespace: verify-ingress
+    verify_ingress_addresses: "{{ groups['ingress'] | map('extract', hostvars, 'ansible_host') | list }}"
+    # Where clients reach the ingress: the VIP, or the only ingress node.
+    verify_ingress_endpoint: >-
+      {{ traefik_ingress_node_vip if groups['ingress'] | length > 1 else verify_ingress_addresses[0] }}
+    verify_ingress_dashboard: "{{ hostvars[groups['ingress'][0]]['traefik_ingress_node_dashboard_enabled'] | default(false) }}"
+    # The test CA's certificate, so that curl checks every certificate it is
+    # served against it, names included.
+    verify_ingress_ca: /root/verify-ingress-ca.crt
+    verify_ingress_curl: >-
+      curl --silent --show-error --max-time 10 --cacert {{ verify_ingress_ca }}
+  tasks:
+    - name: Wait for Traefik to roll out
+      ansible.builtin.command: kubectl rollout status daemonset/traefik -n traefik --timeout=300s
+      changed_when: false
+
+    - name: Read the nodes Traefik runs on
+      ansible.builtin.command: >-
+        kubectl get pods -n traefik -l app.kubernetes.io/name=traefik
+        -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}'
+      register: verify_ingress_nodes
+      changed_when: false
+
+    - name: Check Traefik runs on the ingress nodes and nowhere else
+      ansible.builtin.assert:
+        that:
+          - verify_ingress_nodes.stdout_lines | sort == groups['ingress'] | sort
+        fail_msg: "Traefik runs on {{ verify_ingress_nodes.stdout_lines | sort }}, expected {{ groups['ingress'] | sort }}"
+
+    - name: Check the certificates are issued
+      ansible.builtin.command: kubectl wait certificate --all -n traefik --for=condition=Ready --timeout=60s
+      changed_when: false
+
+    # However many Traefik pods serve a certificate, cert-manager requested it
+    # once.
+    - name: Read the certificate requests
+      ansible.builtin.command: kubectl get certificaterequests -n traefik -o name
+      register: verify_ingress_requests
+      changed_when: false
+
+    - name: Check each certificate was requested once
+      ansible.builtin.assert:
+        that:
+          - verify_ingress_requests.stdout_lines | length == traefik_ingress_node_certificates | length
+        fail_msg: >-
+          {{ verify_ingress_requests.stdout_lines | length }} certificate requests for
+          {{ traefik_ingress_node_certificates | length }} certificates
+
+    - name: Read the test CA's certificate
+      ansible.builtin.command: kubectl get secret verify-ca -n cert-manager -o jsonpath={.data.ca\.crt}
+      register: verify_ingress_ca_data
+      changed_when: false
+
+    - name: Check routes, certificates and redirects
+      block:
+        - name: Write the test CA's certificate
+          ansible.builtin.copy:
+            content: "{{ verify_ingress_ca_data.stdout | b64decode }}"
+            dest: "{{ verify_ingress_ca }}"
+            owner: root
+            group: root
+            mode: "0644"
+
+        # An IngressRoute for a name under each certificate, and a standard
+        # Ingress, as a third-party chart would bring.
+        - name: Deploy a backend behind the ingress
+          ansible.builtin.command:
+            cmd: kubectl apply -f -
+            stdin: |
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: {{ verify_ingress_namespace }}
+              ---
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: whoami
+                namespace: {{ verify_ingress_namespace }}
+              spec:
+                selector:
+                  matchLabels: {app: whoami}
+                template:
+                  metadata:
+                    labels: {app: whoami}
+                  spec:
+                    containers:
+                      - name: whoami
+                        image: traefik/whoami:v1.11.0
+                        ports: [{containerPort: 80}]
+              ---
+              apiVersion: v1
+              kind: Service
+              metadata:
+                name: whoami
+                namespace: {{ verify_ingress_namespace }}
+              spec:
+                selector: {app: whoami}
+                ports: [{port: 80}]
+              ---
+              apiVersion: traefik.io/v1alpha1
+              kind: IngressRoute
+              metadata:
+                name: whoami
+                namespace: {{ verify_ingress_namespace }}
+              spec:
+                entryPoints: [websecure]
+                routes:
+                  - kind: Rule
+                    match: Host(`whoami.example.com`) || Host(`whoami.internal.example.com`)
+                    services: [{name: whoami, port: 80}]
+              ---
+              apiVersion: networking.k8s.io/v1
+              kind: Ingress
+              metadata:
+                name: whoami
+                namespace: {{ verify_ingress_namespace }}
+              spec:
+                rules:
+                  - host: ingress.example.com
+                    http:
+                      paths:
+                        - path: /
+                          pathType: Prefix
+                          backend:
+                            service: {name: whoami, port: {number: 80}}
+          changed_when: true
+
+        - name: Wait for the backend
+          ansible.builtin.command: kubectl rollout status deployment/whoami -n {{ verify_ingress_namespace }} --timeout=300s
+          changed_when: false
+
+        # curl checks the certificate against the test CA and the name asked
+        # for, so a name under *.internal.example.com only succeeds if Traefik
+        # picked that certificate by SNI.
+        - name: Request each name through the ingress address
+          ansible.builtin.command: >-
+            {{ verify_ingress_curl }} --resolve {{ item }}:443:{{ verify_ingress_endpoint }} https://{{ item }}/
+          loop: [whoami.example.com, whoami.internal.example.com, ingress.example.com]
+          register: verify_ingress_responses
+          until: verify_ingress_responses.rc == 0 and 'Hostname:' in verify_ingress_responses.stdout
+          retries: 10
+          delay: 3
+          changed_when: false
+
+        - name: Request through every ingress node
+          ansible.builtin.command: >-
+            {{ verify_ingress_curl }} --resolve whoami.example.com:443:{{ item }} https://whoami.example.com/
+          loop: "{{ verify_ingress_addresses }}"
+          register: verify_ingress_node_responses
+          failed_when: verify_ingress_node_responses.rc != 0 or 'Hostname:' not in verify_ingress_node_responses.stdout
+          changed_when: false
+
+        - name: Read the certificate every ingress node serves for each name
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              openssl s_client -connect {{ item.0 }}:443 -servername {{ item.1 }} </dev/null 2>/dev/null
+              | openssl x509 -noout -fingerprint -sha256 -ext subjectAltName
+            executable: /bin/bash
+          loop: "{{ verify_ingress_addresses | product(['whoami.example.com', 'whoami.internal.example.com', 'unknown.invalid']) | list }}"
+          register: verify_ingress_served
+          changed_when: false
+
+        - name: Check the certificate served for each name
+          vars:
+            verify_ingress_expected:
+              whoami.example.com: "DNS:*.example.com"
+              whoami.internal.example.com: "DNS:*.internal.example.com"
+              # Matches neither, so gets the default.
+              unknown.invalid: "DNS:*.example.com"
+          ansible.builtin.assert:
+            that:
+              - (item.stdout_lines | last | trim) == verify_ingress_expected[item.item.1]
+            fail_msg: >-
+              {{ item.item.0 }} served {{ item.stdout_lines | last | trim }} for
+              {{ item.item.1 }}, expected {{ verify_ingress_expected[item.item.1] }}
+          loop: "{{ verify_ingress_served.results }}"
+          loop_control:
+            label: "{{ item.item.0 }} {{ item.item.1 }}"
+
+        # The same certificate, not one issued per node.
+        - name: Check every ingress node serves the same certificates
+          vars:
+            verify_ingress_fingerprints: >-
+              {{ verify_ingress_served.results
+                 | map(attribute='stdout_lines') | map('first') | unique | list }}
+          ansible.builtin.assert:
+            that:
+              - verify_ingress_fingerprints | length == traefik_ingress_node_certificates | length
+            fail_msg: "Served {{ verify_ingress_fingerprints }}"
+
+        - name: Request a name over plain HTTP
+          ansible.builtin.command: >-
+            curl --silent --max-time 10 --output /dev/null --write-out '%{http_code} %{redirect_url}'
+            --resolve whoami.example.com:80:{{ verify_ingress_endpoint }} http://whoami.example.com/some/path
+          register: verify_ingress_http
+          changed_when: false
+
+        - name: Check plain HTTP is redirected to HTTPS
+          ansible.builtin.assert:
+            that:
+              - verify_ingress_http.stdout.split(' ')[0] in ['301', '308']
+              - verify_ingress_http.stdout.split(' ')[1] is match('https://whoami\.example\.com(:443)?/some/path$')
+            fail_msg: "Plain HTTP got {{ verify_ingress_http.stdout }}"
+
+        - name: Request the dashboard
+          ansible.builtin.command: >-
+            {{ verify_ingress_curl }} --output /dev/null --write-out '%{http_code}'
+            --resolve traefik.example.com:443:{{ verify_ingress_endpoint }}
+            {{ item.credentials }} https://traefik.example.com/dashboard/
+          loop:
+            - {name: anonymous, credentials: ""}
+            - {name: wrong password, credentials: "--user admin:wrong"}
+            - {name: right password, credentials: "--user admin:{{ verify_dashboard_password | default('') }}"}
+          loop_control:
+            label: "{{ item.name }}"
+          register: verify_ingress_dashboard_responses
+          changed_when: false
+
+        - name: Check the dashboard is served only with the right password, and only when enabled
+          vars:
+            verify_ingress_expected: "{{ ['401', '401', '200'] if verify_ingress_dashboard | bool else ['404', '404', '404'] }}"
+          ansible.builtin.assert:
+            that:
+              - verify_ingress_dashboard_responses.results | map(attribute='stdout') | list == verify_ingress_expected
+            fail_msg: >-
+              The dashboard answered {{ verify_ingress_dashboard_responses.results | map(attribute='stdout') | list }}
+              (anonymous, wrong password, right password), expected {{ verify_ingress_expected }}
+      always:
+        - name: Remove the backend
+          ansible.builtin.command: >-
+            kubectl delete namespace {{ verify_ingress_namespace }} --ignore-not-found --timeout=300s
+          changed_when: true
+
+        - name: Remove the test CA's certificate
+          ansible.builtin.file:
+            path: "{{ verify_ingress_ca }}"
+            state: absent
+
+- name: Verify the dashboard is never served without users
+  hosts: ingress
+  become: true
+  tasks:
+    # Expected to fail validation before it changes anything.
+    - name: Enable the dashboard with no users
+      block:
+        - name: Apply the ingress role with no dashboard users
+          ansible.builtin.include_role:
+            name: ptrampert.k8s.traefik_ingress_node
+          vars:
+            traefik_ingress_node_dashboard_enabled: true
+            traefik_ingress_node_dashboard_host: traefik.example.com
+            traefik_ingress_node_dashboard_users: []
+
+        - name: Note that the role accepted it
+          ansible.builtin.set_fact:
+            verify_dashboard_refused: false
+      rescue:
+        - name: Note which check refused it
+          ansible.builtin.set_fact:
+            verify_dashboard_refused: "{{ ansible_failed_task.name is search('Check the dashboard configuration') }}"
+
+    - name: Check the role refused the dashboard without users
+      ansible.builtin.assert:
+        that:
+          - verify_dashboard_refused
+        fail_msg: The ingress role accepted an enabled dashboard with no users.

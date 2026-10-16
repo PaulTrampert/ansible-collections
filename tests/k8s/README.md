@@ -2,17 +2,18 @@
 
 Vagrant VMs (VirtualBox, `bento/ubuntu-24.04`) for converging the collection's roles on real hosts.
 
-| `K8S_TOPOLOGY` | VMs | Inventory | RAM |
-|---|---|---|---|
-| `single` (default) | `cp1` (schedulable) | `inventory/single-node.yml` (the default in `ansible.cfg`) | 4G |
-| `multi` | `cp1`, `worker1`, `worker2`, `nfs1` | `inventory/multi-node.yml` | 13G |
-| `stacked-ha` | `cp1`, `cp2`, `cp3` (schedulable) | `inventory/stacked-ha.yml` | 12G |
-| `external-lb` | `lb1`, `cp1`, `cp2`, `cp3`, `worker1` | `inventory/external-lb.yml` | 17G |
+| `K8S_TOPOLOGY` | VMs | Ingress nodes | Inventory | RAM |
+|---|---|---|---|---|
+| `single` (default) | `cp1` (schedulable) | `cp1` | `inventory/single-node.yml` (the default in `ansible.cfg`) | 4G |
+| `multi` | `cp1`, `worker1`, `worker2`, `nfs1` | `cp1`, `worker1`, with the dashboard | `inventory/multi-node.yml` | 13G |
+| `stacked-ha` | `cp1`, `cp2`, `cp3` (schedulable) | `cp1`, `cp2`, `cp3` | `inventory/stacked-ha.yml` | 12G |
+| `external-lb` | `lb1`, `cp1`, `cp2`, `cp3`, `worker1` | `worker1` | `inventory/external-lb.yml` | 17G |
 
 Addresses on the private network `192.168.56.0/24`, which the VMs reach on `eth1`. `eth0` is VirtualBox NAT and has the same address on every VM, so `inventory/group_vars/all.yml` points the kubelet, API server, Flannel, and keepalived at `eth1`.
 
 | | |
 |---|---|
+| `.7` | the ingress VIP, floated between the ingress nodes in `multi` and `stacked-ha` — no VM has it |
 | `.8` | `lb1` |
 | `.9` | the API server VIP, floated between the control-plane nodes in every topology but `external-lb` — no VM has it |
 | `.10`–`.12` | `cp1`–`cp3` |
@@ -53,10 +54,18 @@ Last, K8up: that the operator is running and that the role, not Helm, applied it
 
 Then cert-manager: that its deployments are rolled out, its CRDs established, and both `ClusterIssuer`s Ready, which means each has registered an ACME account with its Let's Encrypt directory. With a real DNS provider in `cert-manager-dns.yml` (below), it also requests a wildcard certificate from the staging issuer in a throwaway namespace, waits for it to be issued, and checks its Secret is a `kubernetes.io/tls` Secret for that wildcard. Without one, it says so and skips that part.
 
+Last, the ingress. On every ingress node: that keepalived floats the ingress VIP if there is more than one ingress node and not otherwise, and that exactly one node holds the VIP, or none. On the cluster: that Traefik runs on exactly the ingress nodes, that each certificate is Ready and was requested once, and then, against a throwaway backend, that an `IngressRoute` under each wildcard and a standard `Ingress` all serve over HTTPS through the VIP (or the only ingress node), with curl checking each certificate against the test CA and the name; that every ingress node serves the route and the same certificates, with `*.internal.example.com` chosen for a name under it and the default for a name matching neither; that plain HTTP is redirected to HTTPS; and that the dashboard answers 401 without the right password and 200 with it where it is enabled, and 404 where it is not. Finally, that the role refuses an enabled dashboard with no users.
+
 `failover.yml` (stacked topologies only, destructive but self-restoring) stops HAProxy on the node holding the VIP, checks the VIP moves to another node and the API keeps answering, then starts HAProxy again and checks the VIP comes back.
 
 ```sh
 ansible-playbook -i inventory/stacked-ha.yml failover.yml
+```
+
+`ingress-failover.yml` (`multi` and `stacked-ha`, also destructive but self-restoring) fails the node holding the ingress VIP twice: first by taking its ingress label off, so that its Traefik pod goes away while keepalived runs on, then by stopping its keepalived, as losing the node would. Each time it checks that a route keeps serving through the VIP and that the VIP has moved, then restores the node and waits for the VIP to come back.
+
+```sh
+ansible-playbook -i inventory/multi-node.yml ingress-failover.yml
 ```
 
 ## The NFS server
@@ -97,6 +106,12 @@ cert_manager_dns01_credential:
 ```
 
 Then converge and run `verify.yml` as usual. The certificate comes from the staging directory, so it costs nothing against production's rate limits. Like every certificate, it is published in Certificate Transparency logs.
+
+## The ingress certificates
+
+The VMs have no public domain, so Let's Encrypt cannot issue the ingress's certificates. `playbook.yml` creates a CA inside cert-manager instead, the `verify-ca` `ClusterIssuer`, and `inventory/group_vars/all.yml` points `traefik_ingress_node_issuer` at it. The certificates are still issued by cert-manager, which is what the role depends on; only the issuer differs. It is a test fixture, outside the collection: the roles themselves use Let's Encrypt.
+
+The certificates are `*.example.com`, the default, and `*.internal.example.com`. `verify.yml` asks for names under them with `--resolve`, so nothing has to resolve them.
 
 ## Adding a control-plane node
 

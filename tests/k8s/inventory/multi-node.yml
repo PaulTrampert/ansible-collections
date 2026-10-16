@@ -23,6 +23,21 @@ control_plane_lb:
   children:
     control_plane: {}
 
+# The control-plane node, despite its taint, and one worker but not the other,
+# so that Traefik is seen to run exactly where the role was applied. Also the
+# topology that exposes the dashboard; the others leave it off.
+ingress:
+  hosts:
+    cp1:
+    worker1:
+  vars:
+    traefik_ingress_node_dashboard_enabled: true
+    traefik_ingress_node_dashboard_host: traefik.example.com
+    # bcrypt of dashboard-test-password; a test value for throwaway VMs.
+    traefik_ingress_node_dashboard_users:
+      - "admin:$2b$12$XEDxYEHtWVHibETxbFLfZ.89mdlqRsxZB7eC5dBzixFyLZ7pDM0A2"
+    verify_dashboard_password: dashboard-test-password
+
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}

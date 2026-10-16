@@ -14,6 +14,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | `ptrampert.k8s.rclone_restic_server` | one control-plane node | A restic REST server inside the cluster, `rclone serve restic`, storing the repositories on any rclone remote. |
 | `ptrampert.k8s.k8up` | one control-plane node | The K8up backup operator, which backs up volumes and database dumps to restic repositories. |
 | `ptrampert.k8s.cert_manager` | one control-plane node | cert-manager, with `ClusterIssuer`s for Let's Encrypt's staging and production directories that solve DNS-01 through any provider cert-manager supports. |
+| `ptrampert.k8s.traefik_ingress_node` | `ingress` | Makes the hosts ingress nodes: Traefik on ports 80 and 443 of each, wildcard certificates from cert-manager, and a VIP floated between them when there is more than one. |
 
 Role inputs are documented in each role's `meta/argument_specs.yml` (`ansible-doc -t role ptrampert.k8s.<role>`).
 
@@ -25,6 +26,7 @@ The roles expect these groups:
 
 - `control_plane`: control-plane nodes. The first host in the group creates the cluster; the rest join it.
 - `workers`: worker nodes (may be empty for a single-node cluster).
+- `ingress`: the nodes that take ingress traffic, control-plane nodes or workers. Only needed with `ptrampert.k8s.traefik_ingress_node`.
 - A parent group containing both, used to run `ptrampert.k8s.node` (e.g. `k8s_cluster`).
 
 ## The API server address
@@ -504,6 +506,158 @@ Every certificate is published in public Certificate Transparency logs, permanen
 per host lists every host name, so one wildcard per domain level gives away less about what the
 cluster runs.
 
+## Ingress
+
+`ptrampert.k8s.traefik_ingress_node` makes the hosts it is applied to the cluster's ingress nodes,
+running [Traefik](https://traefik.io/traefik/). Traefik is part of what the role offers, not a
+detail of it: routes can use Traefik's own resources (`IngressRoute`, middlewares, TCP and UDP
+routers), and those would not survive a change of controller.
+
+Apply it to the `ingress` group, after `cert_manager`. Every node can be an ingress node, or a
+chosen few, control-plane nodes included:
+
+```yaml
+- name: Make the ingress nodes
+  hosts: ingress
+  become: true
+  roles:
+    - ptrampert.k8s.traefik_ingress_node
+```
+
+The role labels each host's node `node-role.kubernetes.io/ingress`, through the API server from a
+control-plane host, since a kubelet cannot give its own node a `node-role.kubernetes.io/*` label.
+Traefik runs as a DaemonSet on the labelled nodes and nowhere else, and takes ports 80 and 443 on
+the node itself. It tolerates the control-plane taint, so a control-plane node in the group serves
+ingress like any other: the label decides, not the taint.
+
+Run the role against the whole group, as with the control plane: every ingress node needs the
+addresses of the others, and the role refuses to run if part of the group is missing from the play.
+
+### Reaching the ingress
+
+With one ingress node, clients reach it on its own address. It gets no keepalived: with nothing to
+fail over to, that would only be one more thing that can fail.
+
+With two or more, they float `traefik_ingress_node_vip` between them with keepalived, the same way
+the control plane floats the API server's address. keepalived checks that the local Traefik
+answers on port 443, so the VIP only ever sits on a node whose Traefik is serving, and moves when it
+stops. There is no HAProxy in front: every node that can hold the VIP is already running Traefik on
+443 itself.
+
+```yaml
+traefik_ingress_node_vip: 192.0.2.20
+```
+
+Point DNS at the VIP, or at the only ingress node. Unlike the API server's address, nothing in the
+cluster depends on it, so a single ingress node can become two later: add the second host to the
+group, set `traefik_ingress_node_vip`, run the playbook, and repoint DNS at the VIP.
+
+The VIP uses VRRP router ID 52 (`traefik_ingress_node_vip_router_id`), next to the control plane's
+51. Both can run on the same node; each keeps its own keepalived instance.
+
+### Certificates
+
+Certificates are issued by cert-manager and served from Traefik's default certificate store. Each
+entry of `traefik_ingress_node_certificates` becomes a `Certificate` in Traefik's namespace, from
+the `letsencrypt-production` issuer unless `traefik_ingress_node_issuer` names another, and
+Traefik picks among them by the name the client asks for (SNI). Routes carry no TLS settings of
+their own: every host one of the certificates covers is served without asking.
+
+```yaml
+traefik_ingress_node_certificates:
+  - secret_name: wildcard-example-com
+    dns_names: ["*.example.com"]
+    # Served when a client asks for a name none of them covers.
+    default: true
+  - secret_name: wildcard-internal-example-com
+    dns_names: ["*.internal.example.com"]
+  - secret_name: example-com
+    dns_names: [example.com]
+```
+
+A wildcard covers one label, and not its own apex: `*.example.com` covers `app.example.com` but
+neither `app.internal.example.com` nor `example.com`. So it is a list, with a certificate for each
+level served. Exactly one is the default.
+
+Wildcards keep the cluster's host names private. Every certificate is published in Certificate
+Transparency logs, so a certificate per host would list every service the cluster runs; a wildcard
+lists `*.example.com`. The keys stay in Traefik's namespace, one copy each, rather than being copied
+into every namespace that has a route. That suits a cluster whose workloads are all trusted alike.
+If some namespace is not, give it certificates of its own for its own hosts, and keep the wildcards
+where they are.
+
+Traefik's built-in ACME client is not used. It keeps its state per instance, so every Traefik pod
+would request the same certificates, against Let's Encrypt's limit of 5 duplicates a week.
+cert-manager requests each once, and every pod reads the same Secret, so Traefik is stateless and
+there can be as many ingress nodes as needed.
+
+Removing an entry leaves its `Certificate` and Secret in place; delete them by hand.
+
+### Routes
+
+Both of Traefik's Kubernetes providers are on. Write routes as `IngressRoute`s, whose rules are
+Traefik's own, checked by the API server, and which can refer to middlewares:
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app
+  namespace: app
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: Host(`app.example.com`) && PathPrefix(`/api`)
+      services:
+        - name: app
+          port: 80
+```
+
+Standard `Ingress` works too, for the Helm charts of other projects, which ship `Ingress`
+templates. Traefik's `IngressClass` is the cluster default, so they need no class set.
+
+Plain HTTP is always redirected to HTTPS, permanently. Nothing needs it: every route has a
+certificate from the store, and cert-manager proves control of a domain over DNS. HSTS is left to
+each route.
+
+### The dashboard
+
+Traefik's dashboard lists every route, and so every host name the cluster serves, so it is not
+exposed by default. Reach it with a port-forward, at `http://localhost:8080/dashboard/`:
+
+```sh
+kubectl port-forward -n traefik daemonset/traefik 8080:8080
+```
+
+Port 8080 is not published on the nodes, but it answers any pod in the cluster.
+
+To serve it on a host name, behind basic auth:
+
+```yaml
+traefik_ingress_node_dashboard_enabled: true
+traefik_ingress_node_dashboard_host: traefik.example.com
+traefik_ingress_node_dashboard_users:
+  - "{{ vault_traefik_dashboard_admin }}"   # as `htpasswd -nB admin` prints it
+```
+
+The host must be covered by one of the certificates. The users are htpasswd lines rather than
+passwords, so that the role does not hash them again, with a new salt, on every run. Enabling the
+dashboard without users fails, so it is never served without authentication.
+
+### Removing an ingress node
+
+Taking a host out of the `ingress` group does not undo anything on it. Remove its label, which
+stops Traefik there:
+
+```sh
+kubectl label node <node> node-role.kubernetes.io/ingress-
+```
+
+If the group had more than one node, delete `/etc/keepalived/fragments.d/10-traefik-ingress.conf`
+on the host and run the playbook, so that it stops competing for the VIP. If the group has one node
+left, do the same on that node, and point DNS at its own address.
+
 ## Example playbook
 
 ```yaml
@@ -553,6 +707,14 @@ cluster runs.
   roles:
     # Needs cert_manager_dns01 and cert_manager_dns01_credential.
     - ptrampert.k8s.cert_manager
+
+# The whole group at once. Needs traefik_ingress_node_certificates, and
+# traefik_ingress_node_vip with more than one ingress node.
+- name: Make the ingress nodes
+  hosts: ingress
+  become: true
+  roles:
+    - ptrampert.k8s.traefik_ingress_node
 ```
 
 For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still needs a `control_plane_endpoint`; a DNS name pointing at the node lets it grow a second control-plane node later.

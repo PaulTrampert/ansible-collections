@@ -1,0 +1,94 @@
+---
+# Destructive: fails the ingress node holding the ingress VIP twice, once by
+# taking its Traefik away and once by stopping its keepalived as a node that
+# has gone would, and checks each time that the VIP moves and routes keep
+# serving. Leaves the nodes as it found them. Only applies to the topologies
+# with more than one ingress node.
+- name: Serve a route to test with
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Check that the ingress has a floating address
+      ansible.builtin.assert:
+        that:
+          - groups['ingress'] | length > 1
+        fail_msg: >-
+          ingress-failover.yml needs more than one ingress node, and this
+          topology has {{ groups['ingress'] | length }}.
+        quiet: true
+
+    - name: Deploy a backend behind the ingress
+      ansible.builtin.command:
+        cmd: kubectl apply -f -
+        stdin: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: verify-ingress-failover
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: whoami
+            namespace: verify-ingress-failover
+          spec:
+            selector:
+              matchLabels: {app: whoami}
+            template:
+              metadata:
+                labels: {app: whoami}
+              spec:
+                containers:
+                  - name: whoami
+                    image: traefik/whoami:v1.11.0
+                    ports: [{containerPort: 80}]
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: whoami
+            namespace: verify-ingress-failover
+          spec:
+            selector: {app: whoami}
+            ports: [{port: 80}]
+          ---
+          apiVersion: traefik.io/v1alpha1
+          kind: IngressRoute
+          metadata:
+            name: whoami
+            namespace: verify-ingress-failover
+          spec:
+            entryPoints: [websecure]
+            routes:
+              - kind: Rule
+                match: Host(`whoami.example.com`)
+                services: [{name: whoami, port: 80}]
+      changed_when: true
+
+    - name: Wait for the backend
+      ansible.builtin.command: kubectl rollout status deployment/whoami -n verify-ingress-failover --timeout=300s
+      changed_when: false
+
+- name: Fail the VIP holder's Traefik, then its keepalived
+  hosts: ingress
+  become: true
+  tasks:
+    - name: Fail over twice
+      ansible.builtin.include_tasks: tasks/ingress_failover.yml
+      loop:
+        - traefik
+        - keepalived
+      loop_control:
+        loop_var: ingress_failover_mode
+
+- name: Remove the test route
+  hosts: control_plane[0]
+  become: true
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  tasks:
+    - name: Remove the backend
+      ansible.builtin.command: kubectl delete namespace verify-ingress-failover --ignore-not-found --timeout=300s
+      changed_when: true

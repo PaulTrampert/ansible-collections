@@ -1,0 +1,36 @@
+---
+# No HAProxy: every node that can hold the VIP runs Traefik on 443 itself, and
+# one whose Traefik stops serving gives the VIP up.
+- name: Float the ingress address
+  ansible.builtin.include_role:
+    name: ptrampert.general_services.keepalived
+  vars:
+    # Kept apart from the control plane's VRRP instance on a control-plane node
+    # that is also an ingress node.
+    keepalived_config_name: traefik-ingress
+    keepalived_scripts:
+      # Connects to the node's own port 443, which the host port forwards to
+      # the local Traefik pod, so the VIP only sits on a node whose Traefik is
+      # serving.
+      chk_traefik_ingress:
+        command: "/bin/bash -c '</dev/tcp/{{ traefik_ingress_node_address }}/443'"
+        interval: 2
+        timeout: 2
+        fall: 2
+        rise: 2
+
+    keepalived_vrrp_instances:
+      - name: traefik-ingress
+        interface: "{{ traefik_ingress_node_vip_device }}"
+        # BACKUP everywhere: let the election decide rather than have a node
+        # claim the address before its Traefik is up.
+        state: BACKUP
+        virtual_router_id: "{{ traefik_ingress_node_vip_router_id }}"
+        priority: "{{ traefik_ingress_node_vip_priority }}"
+        virtual_ipaddresses:
+          - "{{ traefik_ingress_node_vip_cidr }}"
+        # Unicast VRRP, which works on networks that do not carry multicast.
+        unicast_src_ip: "{{ traefik_ingress_node_address }}"
+        unicast_peers: "{{ traefik_ingress_node_vip_peers }}"
+        track_scripts:
+          - chk_traefik_ingress

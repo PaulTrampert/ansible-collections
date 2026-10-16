@@ -1,0 +1,109 @@
+---
+traefik_ingress_node_release: traefik
+traefik_ingress_node_chart: traefik
+
+# One directory per chart version, so that a new version is pulled next to the
+# old one rather than over it.
+traefik_ingress_node_chart_dir: /usr/local/lib/traefik-{{ traefik_ingress_node_version }}
+
+# Holds the Python Kubernetes client kubernetes.core runs with, on the
+# control-plane host.
+traefik_ingress_node_venv: /opt/traefik-ingress-node/venv
+
+# Owns the CRDs' fields on the API server in Helm's place.
+traefik_ingress_node_field_manager: ptrampert.k8s.traefik_ingress_node
+
+# Marks a node as an ingress node; Traefik's DaemonSet selects on it. A kubelet
+# cannot set a node-role.kubernetes.io/* label on its own node, so the role sets
+# it through the API server.
+traefik_ingress_node_label: node-role.kubernetes.io/ingress
+
+traefik_ingress_node_name: "{{ ansible_facts['nodename'] | lower }}"
+
+traefik_ingress_node_hosts: "{{ groups[traefik_ingress_node_group] }}"
+
+# A lone ingress node has nothing to fail over to, so it gets no keepalived and
+# is reached on its own address.
+traefik_ingress_node_floating: "{{ traefik_ingress_node_hosts | length > 1 }}"
+
+# Where clients reach the ingress, as Traefik reports it in each Ingress's
+# status.
+traefik_ingress_node_endpoint: >-
+  {{ traefik_ingress_node_vip if traefik_ingress_node_floating
+     else hostvars[traefik_ingress_node_hosts[0]]['traefik_ingress_node_host_address'] }}
+
+# The interface facts for the node's address, used to work out where the VIP
+# belongs.
+traefik_ingress_node_address_facts: >-
+  {{ ansible_facts | dict2items
+     | selectattr('value.device', 'defined')
+     | selectattr('value.ipv4.address', 'defined')
+     | selectattr('value.ipv4.address', 'eq', traefik_ingress_node_address)
+     | map(attribute='value') | list }}
+
+traefik_ingress_node_vip_device: >-
+  {{ traefik_ingress_node_address_facts | map(attribute='device') | first | default('', true) }}
+
+traefik_ingress_node_vip_cidr: >-
+  {{ traefik_ingress_node_vip }}/{{ traefik_ingress_node_address_facts
+     | map(attribute='ipv4.prefix') | first | default(24, true) }}
+
+# Highest priority to the first host in the group, so the VIP settles there.
+traefik_ingress_node_vip_priority: "{{ 150 - traefik_ingress_node_hosts.index(inventory_hostname) }}"
+
+# The other ingress nodes, as VRRP unicast peers.
+traefik_ingress_node_vip_peers: >-
+  {{ traefik_ingress_node_hosts | reject('eq', inventory_hostname)
+     | map('extract', hostvars, 'traefik_ingress_node_host_address') | list }}
+
+# The dashboard's basic auth users, Middleware and IngressRoute share this name.
+traefik_ingress_node_dashboard_name: traefik-dashboard
+
+traefik_ingress_node_values:
+  # One pod on every ingress node, taking ports 80 and 443 on the node itself.
+  deployment:
+    kind: DaemonSet
+  nodeSelector:
+    node-role.kubernetes.io/ingress: ""
+  # The label decides placement, not the taint: a control-plane node the role
+  # is applied to serves ingress too.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  # A replacement pod cannot start next to the old one, which still holds the
+  # host ports, so an update replaces one node's pod at a time.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  ports:
+    web:
+      hostPort: 80
+      http:
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+    websecure:
+      hostPort: 443
+  # Clients reach the pods through the host ports, so nothing needs a Service.
+  service:
+    enabled: false
+  providers:
+    kubernetesCRD:
+      enabled: true
+    kubernetesIngress:
+      enabled: true
+      # There is no Service to take an address from.
+      publishedService:
+        enabled: false
+      ingressEndpoint:
+        ip: "{{ traefik_ingress_node_endpoint }}"
+  # Serves the dashboard on the pods' own port 8080, which no host port or
+  # Service exposes, so that kubectl port-forward reaches it.
+  api:
+    dashboard: true
+    insecure: true
