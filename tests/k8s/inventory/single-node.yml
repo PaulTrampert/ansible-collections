@@ -12,6 +12,11 @@ k8s_cluster:
   vars:
     control_plane_schedulable: true
 
+# Load balances for itself all the same, floating the VIP alone, so it can grow.
+control_plane_lb:
+  children:
+    control_plane: {}
+
 # Only the external-lb topology has a load balancer host.
 load_balancers:
   hosts: {}

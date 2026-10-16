@@ -13,15 +13,10 @@
     # Every kubectl below goes through this address, so the rest of the play
     # exercises the load balancer as well as the cluster.
     - name: Check the cluster uses the expected control plane endpoint
-      vars:
-        verify_endpoint: >-
-          {{ control_plane_endpoint | default('')
-             if (control_plane_load_balancer | default('stacked')) == 'external'
-             else control_plane_vip ~ ':' ~ (control_plane_lb_port | default(8443)) }}
       ansible.builtin.assert:
         that:
-          - verify_server.stdout == 'https://' ~ verify_endpoint
-        fail_msg: "API server at {{ verify_server.stdout }}, expected https://{{ verify_endpoint }}"
+          - verify_server.stdout == 'https://' ~ control_plane_endpoint
+        fail_msg: "API server at {{ verify_server.stdout }}, expected https://{{ control_plane_endpoint }}"
 
     - name: Read node Ready status
       ansible.builtin.command: >-
@@ -84,7 +79,7 @@
   become: true
   tasks:
     - name: Check the stacked load balancer
-      when: (control_plane_load_balancer | default('stacked')) == 'stacked'
+      when: inventory_hostname in groups['control_plane_lb']
       block:
         - name: Find the node holding the VIP
           ansible.builtin.include_tasks: tasks/find_vip_holder.yml
@@ -99,7 +94,7 @@
         # so that the VIP serves the API wherever it lands.
         - name: Check that this node's HAProxy serves the API
           ansible.builtin.uri:
-            url: "https://{{ ansible_host }}:{{ control_plane_lb_port | default(8443) }}/healthz"
+            url: "https://{{ ansible_host }}:{{ k8s_api_lb_port }}/healthz"
             validate_certs: false
             return_content: true
           register: verify_healthz

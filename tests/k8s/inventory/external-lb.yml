@@ -1,7 +1,6 @@
 ---
-# Three control-plane nodes behind a separate HAProxy host, the topology
-# control_plane_load_balancer: external expects. The cluster installs no load
-# balancer of its own; lb1 is built with ptrampert.general_services.haproxy,
+# Three control-plane nodes behind a separate HAProxy host. The cluster runs no
+# load balancer of its own; lb1 is built with ptrampert.general_services.haproxy,
 # the same way a load balancer outside the cluster would be.
 load_balancers:
   hosts:
@@ -36,18 +35,16 @@ k8s_cluster:
           ansible_host: 192.168.56.11
         cp3:
           ansible_host: 192.168.56.12
-      vars:
-        # How lb1 reaches this node, collected into its server list above.
-        k8s_api_backend:
-          name: "{{ inventory_hostname }}"
-          address: "{{ ansible_host }}:6443"
     workers:
       hosts:
         worker1:
           ansible_host: 192.168.56.21
   vars:
-    control_plane_load_balancer: external
-    control_plane_endpoint: "192.168.56.8:6443"
+    k8s_api_endpoint: "192.168.56.8:6443"
+
+# The control-plane nodes don't load balance for themselves here.
+control_plane_lb:
+  hosts: {}
 
 # Only the multi topology has an NFS server.
 nfs_servers:

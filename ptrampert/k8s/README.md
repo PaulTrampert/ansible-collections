@@ -7,7 +7,7 @@ Roles for building and maintaining kubeadm-based Kubernetes clusters on Ubuntu.
 | Role | Runs on | Purpose |
 |---|---|---|
 | `ptrampert.k8s.node` | every node | Kubernetes host prerequisites: swap off, kernel modules and sysctls, containerd (pinned to a release series), kubelet/kubeadm/kubectl (held at a fixed version), kubelet node IP. |
-| `ptrampert.k8s.control_plane` | `control_plane` | A stable API server address, `kubeadm init` on the first node and `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
+| `ptrampert.k8s.control_plane` | `control_plane` | `kubeadm init` on the first node with the API server address it is given, `kubeadm join` on the rest, kubeconfigs for users, Helm, Flannel CNI, and the scheduling toggle. |
 | `ptrampert.k8s.worker` | `workers` | `kubeadm join` with a short-lived token, then waits for the node to become Ready. |
 | `ptrampert.k8s.local_path_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on the node using it, with Rancher's local-path-provisioner. |
 | `ptrampert.k8s.nfs_provisioner` | one control-plane node | A `StorageClass` that provisions each volume as a directory on an NFS export, using the kubernetes-csi NFS driver. |
@@ -29,18 +29,26 @@ The roles expect these groups:
 
 ## The API server address
 
-kubeadm writes one address — the *control plane endpoint* — into every kubeconfig and into the API server's certificate when the cluster is created, and **it cannot be changed afterwards**. A cluster created without one can never gain a second control-plane node: `kubeadm join --control-plane` refuses outright. So `ptrampert.k8s.control_plane` always configures one, even for a cluster that starts with a single control-plane node. That single node can then be grown into a highly available control plane later.
+kubeadm writes one address — the *control plane endpoint* — into every kubeconfig and into the API server's certificate when the cluster is created, and **it cannot be changed afterwards**. A cluster created without one can never gain a second control-plane node: `kubeadm join --control-plane` refuses outright. So `ptrampert.k8s.control_plane` requires one, `control_plane_endpoint`, even for a cluster that starts with a single control-plane node. That single node can then be grown into a highly available control plane later.
 
-There are two ways to provide it, chosen with `control_plane_load_balancer`.
+The role doesn't serve the endpoint itself. Whatever does has to be up before the role runs, and the role checks that something answers there before `kubeadm init`. It can be anything that forwards to port 6443 on every control-plane node:
 
-### Stacked (the default)
+- **HAProxy and keepalived on the control-plane nodes themselves**, from `ptrampert.general_services`, as below.
+- **A load balancer outside the cluster**: a hardware one, a cloud one, or a separate host built with `ptrampert.general_services.haproxy`. It should health-check each API server on `/healthz`.
+- **A DNS name.** The name is what's frozen into the cluster, not the address behind it, so a name keeps the most options open. It can point at a single node's address today and at a VIP or load balancer later.
 
-The control-plane nodes load balance for themselves. HAProxy runs on each of them and balances across every API server; keepalived floats `control_plane_vip` between them over VRRP, so exactly one node holds it at a time.
+```yaml
+control_plane_endpoint: k8s-api.example.com:6443
+```
+
+### Load balancing on the control-plane nodes
+
+The control-plane nodes can balance for themselves, with no separate host. HAProxy runs on each of them and balances across every API server. keepalived floats a VIP between them over VRRP, so exactly one node holds it at a time.
 
 ```
                 clients, kubelets, workers
                            |
-             control_plane_vip:8443   <-- keepalived moves this between nodes
+                   192.0.2.10:8443    <-- keepalived moves this between nodes
                            |
                         HAProxy       <-- on whichever node holds the VIP
                     /      |      \
@@ -48,34 +56,91 @@ The control-plane nodes load balance for themselves. HAProxy runs on each of the
                         :6443 kube-apiserver
 ```
 
-HAProxy uses port 8443 rather than 6443 because kube-apiserver already has 6443 on those hosts. Set `control_plane_lb_port` to change it.
-
-Because every node's HAProxy knows every API server, the VIP serves the API wherever it lands — including on a node whose own API server is down, or has not been created yet. keepalived's health check watches the local HAProxy, not the API server, which is what lets the VIP be up for the very `kubeadm init` that creates the first API server.
+The playbook composes it, in a play that runs before `ptrampert.k8s.control_plane`:
 
 ```yaml
-control_plane_vip: 192.0.2.10
+# group_vars/control_plane.yml
+api_vip: 192.0.2.10
+api_lb_port: 8443
+control_plane_endpoint: "{{ api_vip }}:{{ api_lb_port }}"
+
+# Set explicitly, so nothing derives it from facts and picks up the VIP while
+# this node happens to hold it. Give each host its own, in host_vars.
+# control_plane_advertise_address: 192.0.2.11
+
+# How the other nodes' HAProxy reaches this node's API server. Group vars rather
+# than play vars, so every host can read the others' through hostvars.
+api_backend:
+  name: "{{ inventory_hostname }}"
+  address: "{{ control_plane_advertise_address }}:6443"
+api_vip_peers: >-
+  {{ groups['control_plane'] | reject('eq', inventory_hostname)
+     | map('extract', hostvars, 'control_plane_advertise_address') | list }}
 ```
-
-VRRP uses IP protocol 112 and must be allowed between the control-plane nodes. The role sends it by unicast, so it works on networks that do not carry multicast.
-
-### External
-
-Something outside the cluster balances the API servers — a hardware load balancer, a cloud one, or a separate HAProxy host built with `ptrampert.general_services.haproxy`. The role installs no load balancer of its own.
 
 ```yaml
-control_plane_load_balancer: external
-control_plane_endpoint: k8s-api.example.com:6443
+- name: Load balance the API servers on the control-plane nodes
+  hosts: control_plane
+  become: true
+  vars:
+    haproxy_listen:
+      - name: kube-apiserver
+        bind: "*:{{ api_lb_port }}"
+        mode: tcp
+        balance: roundrobin
+        # The API server answers /healthz without credentials, so the check
+        # tells a running API server from a listening socket.
+        options: [tcplog, httpchk]
+        extra:
+          - "http-check send meth GET uri /healthz"
+          - "http-check expect status 200"
+        # Watches are long-lived connections; short timeouts would keep cutting them.
+        timeouts: {connect: "5s", client: "1h", server: "1h"}
+        server_options: "check check-ssl verify none inter 2s fall 3 rise 2"
+        servers: "{{ groups['control_plane'] | map('extract', hostvars, 'api_backend') | list }}"
+
+    keepalived_scripts:
+      # The local HAProxy, not the API server: see below.
+      chk_kube_apiserver_lb:
+        command: "/bin/bash -c '</dev/tcp/127.0.0.1/{{ api_lb_port }}'"
+        interval: 2
+        fall: 2
+        rise: 2
+    keepalived_vrrp_instances:
+      - name: kube-apiserver
+        interface: eth0
+        # BACKUP everywhere: let the election decide rather than have a node
+        # claim the address before its HAProxy is up.
+        state: BACKUP
+        virtual_router_id: 51
+        # Highest on the first host in the group, so the VIP settles there.
+        priority: "{{ 150 - groups['control_plane'].index(inventory_hostname) }}"
+        virtual_ipaddresses: ["{{ api_vip }}/24"]
+        # Unicast VRRP works on networks that don't carry multicast. A lone
+        # node has no peers, and keepalived refuses a unicast source with
+        # nobody to send to.
+        unicast_src_ip: "{{ control_plane_advertise_address if api_vip_peers else '' }}"
+        unicast_peers: "{{ api_vip_peers }}"
+        track_scripts: [chk_kube_apiserver_lb]
+  roles:
+    - ptrampert.general_services.haproxy
+    - ptrampert.general_services.keepalived
 ```
 
-The load balancer must forward to every control-plane node on port 6443 and health-check them on `/healthz`.
+Things to know about it:
+
+- **HAProxy uses port 8443, not 6443**, because kube-apiserver already has 6443 on those hosts.
+- **keepalived checks the local HAProxy, not the API server.** HAProxy answers whenever it is running, even before any API server exists, which is what lets the VIP be up for the `kubeadm init` that creates the first one. Every node's HAProxy has every API server as a backend, so the VIP serves the API wherever it lands, including on a node whose own API server is down.
+- **VRRP uses IP protocol 112**, which must be allowed between the control-plane nodes.
+- **On a single control-plane node** this puts HAProxy and keepalived in the critical path with nothing to fail over to. A DNS name pointing at the node is the leaner way to keep the option of growing later.
 
 ## Adding a control-plane node
 
 Put the new host in the `control_plane` group and run the playbook again. The role issues a fresh certificate key and join token from the first control-plane node and runs `kubeadm join --control-plane`; existing nodes are left alone. Control-plane nodes join one at a time, because each one is also an etcd member.
 
-Run the playbook against the whole `control_plane` group rather than limiting to the new host: every node needs the addresses of the others to configure HAProxy and keepalived, and the role refuses to run if part of the group is missing from the play.
+Run the playbook against the whole `control_plane` group rather than limiting to the new host: the first node issues the join credentials for all the new ones at once, and the role refuses to run if part of the group is missing from the play.
 
-With `control_plane_load_balancer: external`, add the new node to the external load balancer's backends as well — the role does not manage it.
+Whatever serves `control_plane_endpoint` has to learn about the new node too. With the load balancing above, running the whole playbook does that, since its server list and VRRP peers follow the group. An external load balancer needs the node added to its backends by hand.
 
 ## Storage
 
@@ -448,6 +513,9 @@ cluster runs.
   roles:
     - ptrampert.k8s.node
 
+# Whatever serves control_plane_endpoint comes first: see "The API server
+# address" for a play that load balances on the control-plane nodes.
+
 - name: Bootstrap the control plane
   hosts: control_plane
   become: true
@@ -487,6 +555,6 @@ cluster runs.
     - ptrampert.k8s.cert_manager
 ```
 
-For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still gets a VIP, so it can grow a second control-plane node later.
+For a single-node cluster, put the host in `control_plane`, leave `workers` empty, and set `control_plane_schedulable: true`. It still needs a `control_plane_endpoint`; a DNS name pointing at the node lets it grow a second control-plane node later.
 
-On hosts with more than one network interface, set `node_ip`, `control_plane_advertise_address`, and `control_plane_flannel_iface` so the cluster uses the intended network. The VIP follows `control_plane_advertise_address` unless `control_plane_vip_interface` says otherwise.
+On hosts with more than one network interface, set `node_ip`, `control_plane_advertise_address`, and `control_plane_flannel_iface` so the cluster uses the intended network.

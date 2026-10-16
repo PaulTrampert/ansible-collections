@@ -14,12 +14,16 @@ Addresses on the private network `192.168.56.0/24`, which the VMs reach on `eth1
 | | |
 |---|---|
 | `.8` | `lb1` |
-| `.9` | the API server VIP, floated between the control-plane nodes — no VM has it |
+| `.9` | the API server VIP, floated between the control-plane nodes in every topology but `external-lb` — no VM has it |
 | `.10`–`.12` | `cp1`–`cp3` |
 | `.21`–`.22` | `worker1`–`worker2` |
 | `.30` | `nfs1`, which exports `/srv/nfs` to the private network |
 
 Set `K8S_TOPOLOGY` for **every** `vagrant` command, including `destroy` — without it Vagrant doesn't know the other VMs exist. Destroy one topology before bringing up another: they share VM names.
+
+## The API server's load balancer
+
+`ptrampert.k8s.control_plane` only takes the API server's address, so `playbook.yml` sets up what serves it before the control plane, the way a real playbook would. In `single`, `multi` and `stacked-ha`, the control-plane nodes are in the `control_plane_lb` group. That play runs `ptrampert.general_services.haproxy` on port 8443 on each of them, balancing across every API server, and `ptrampert.general_services.keepalived` to float the VIP between them. In `external-lb` that group is empty, and `lb1`, in `load_balancers`, runs HAProxy on 6443 instead.
 
 ## Running a topology
 
