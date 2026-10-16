@@ -2,17 +2,20 @@
 # Kubernetes version for kubelet, kubeadm, and kubectl. The packages are held.
 # On a node that already has them, this role leaves them alone, and changing
 # the version upgrades the cluster: ptrampert.k8s.control_plane and
-# ptrampert.k8s.worker carry out the kubeadm upgrade procedure, one minor
-# version at a time. It has no Renovate annotation yet. When it moves to a new
-# minor version, move the cap on the Python Kubernetes client in
-# .github/renovate.json5 with it.
+# ptrampert.k8s.worker carry out the kubeadm upgrade procedure. Renovate
+# proposes one minor version at a time, which is all kubeadm can upgrade by.
+# When it moves to a new minor version, move the Python Kubernetes client with
+# it (see .github/renovate.json5).
+# renovate: datasource=github-releases depName=kubernetes/kubernetes
 node_kubernetes_version: "1.36.4"
 
 # containerd.io release series from Docker's apt repository. apt is pinned to
 # this series, so routine OS upgrades pick up patch releases only. On a node
 # that already has containerd, changing it moves the node to the new series
 # during the upgrade in ptrampert.k8s.control_plane and ptrampert.k8s.worker,
-# while the node is cordoned. It has no Renovate annotation yet either.
+# while the node is cordoned. Renovate looks it up in the repository's noble
+# suite, which carries the same series as the others.
+# renovate: datasource=deb depName=containerd.io registryUrl=https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64
 node_containerd_series: "2.3"
 
 # Pod sandbox ("pause") image. Keep it in step with the one kubeadm expects for

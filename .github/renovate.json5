@@ -75,14 +75,43 @@
       enabled: false,
     },
 
+    // Kubernetes, in the node role. kubeadm upgrades one minor version at a
+    // time, so each minor release is an update of its own. They would each get
+    // a branch (minor-1.37-ptrampert.k8s, ...); the branch topic puts them back
+    // in the collection's, where Renovate keeps the first and drops the rest
+    // as collisions. That is a patch release of the current minor if there is
+    // one, otherwise the next minor, never one further ahead. A later run
+    // proposes the next step.
+    {
+      matchDatasources: ['github-releases'],
+      matchPackageNames: ['kubernetes/kubernetes'],
+      extractVersion: '^v(?<version>.+)$',
+      separateMajorMinor: true,
+      separateMultipleMinor: true,
+      group: {branchTopic: '{{{groupName}}}'},
+      prBodyNotes: [
+        '{{#if isMinor}}This moves Kubernetes to {{{newMajor}}}.{{{newMinor}}}. Before merging, set the Python Kubernetes client cap in `.github/renovate.json5` to `~={{{newMinor}}}.0`, update the `*_kubernetes_client_version` pins to its newest {{{newMinor}}}.x release, and set `node_sandbox_image` to the pause image `kubeadm config images list` names for the new version.{{/if}}',
+      ],
+    },
+
+    // containerd.io's apt versions look like 2.4.2-1~ubuntu.24.04~noble; the
+    // node role pins the release series, 2.4.
+    {
+      matchDatasources: ['deb'],
+      matchPackageNames: ['containerd.io'],
+      extractVersion: '^(?<version>\\d+\\.\\d+)\\.',
+      versioning: 'loose',
+    },
+
     // The Python Kubernetes client's major version follows the Kubernetes
     // minor version it was built for (36.x for 1.36). Keep it at the cluster's
-    // version, node_kubernetes_version in the node role; moving this cap is
-    // part of upgrading Kubernetes.
+    // version, node_kubernetes_version in the node role. Renovate cannot tie
+    // one dependency to another, so the PR that moves Kubernetes to a new
+    // minor version moves this cap too, as its description says.
     {
       matchDatasources: ['pypi'],
       matchPackageNames: ['kubernetes'],
-      allowedVersions: '<37',
+      allowedVersions: '~=36.0',
     },
 
     {

@@ -47,8 +47,9 @@ Each collection has its own version in its `galaxy.yml` and its own `CHANGELOG.m
 published, but the version still says what changed between two refs.
 
 The roles pin the upstream software they install. Renovate proposes newer releases weekly, one
-pull request per collection, and each one raises that collection's patch version. They are
-tested before merging like any other change.
+pull request per collection, and each one raises that collection's patch version. That includes
+the Kubernetes version `ptrampert.k8s` installs, one minor version at a time. They are tested
+before merging like any other change.
 
 ## Contributing
 
