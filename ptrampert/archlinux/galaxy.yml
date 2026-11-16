@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT-0
+---
+namespace: ptrampert
+name: archlinux
+version: 1.0.0
+readme: README.md
+
+authors:
+  - Paul Trampert <paul.trampert@ptrampert.com>
+
+description: Roles for setting up and maintaining end-user Arch Linux machines
+
+license:
+  - MIT
+
+tags:
+  - linux
+  - archlinux
+  - desktop
+  - workstation
+
+dependencies: {}
+
+repository: https://github.com/PaulTrampert/ansible-collections
+issues: https://github.com/PaulTrampert/ansible-collections/issues
+
+build_ignore: []
